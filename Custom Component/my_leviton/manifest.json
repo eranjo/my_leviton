@@ -1,0 +1,10 @@
+{
+  "domain": "my_leviton",
+  "name": "Leviton Lighting System",
+  "version": "1.0",
+  "documentation": "https://github.com/yourusername/my_leviton",
+  "dependencies": [],
+  "codeowners": ["@yourgithubusername"],
+  "requirements": ["pyusb"],
+  "iot_class": "local_polling"
+}
