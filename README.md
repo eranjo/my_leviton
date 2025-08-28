@@ -12,6 +12,16 @@ This repo packages the `my_leviton` integration as a HACS-compatible repository.
 - Implements `light` platform
 - No cloud dependency
 
+## Installation
+
+[![Open HACS repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=eranjo&repository=my_leviton)
+
+### Manually
+Copy `custom_components/my_leviton/` to `/config/custom_components/my_leviton` in Home Assistant.
+
+## Configuration
+
+[![Add Integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=my_leviton)
 ## Installation (HACS)
 1. In Home Assistant, go to **HACS → Integrations → 3‑dot menu → Custom repositories**.
 2. Add this repository URL and set **Category** to **Integration**.
@@ -20,10 +30,6 @@ This repo packages the `my_leviton` integration as a HACS-compatible repository.
 5. Go to **Settings → Devices & Services → Add Integration** and search for **My Leviton (USB)** (or add via YAML if your version prefers file‑based setup).
 
 > If HACS doesn’t automatically discover it, verify the folder structure on your HA host is `config/custom_components/my_leviton/` with the files from this repo, and restart HA again.
-
-## Manual Installation
-1. Copy the `custom_components/my_leviton/` folder from this repository into your Home Assistant `config/custom_components/` directory.
-2. Restart Home Assistant.
 
 ## Directory Structure
 ```
