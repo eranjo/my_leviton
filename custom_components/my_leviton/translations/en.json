@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up My Leviton (USB)"
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "This integration is already configured."
+    }
+  },
+  "title": "My Leviton (USB)"
+}
