@@ -59,4 +59,4 @@ LICENSE
 
 ---
 
-© 2025 Your Name. See [LICENSE](LICENSE).
+© 2025 eranjo. See [LICENSE](LICENSE).
