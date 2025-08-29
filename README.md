@@ -7,6 +7,12 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
+## Still to do
+- Implement automatic discovery of devices on the bus network
+- Enable automatic identification of device types
+- Reverse-engineer and implement checksum validation
+- Additional tasks to be determined...
+
 ## Features
 - Local USB communication (requires `pyusb`)
 - Implements `light` platform
