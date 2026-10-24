@@ -27,3 +27,9 @@ def turn_light_on(light_name: str) -> bool:
 
 def turn_light_off(light_name: str) -> bool:
     return send_light_command(light_name, "off")
+
+def turn_light_brightness(light_name: str, brightness: int) -> bool:
+    """Set dimmer brightness (Home Assistant 0-255 scale)."""
+    from .utils.commands import send_light_brightness
+
+    return send_light_brightness(light_name, brightness)
