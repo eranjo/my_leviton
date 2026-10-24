@@ -22,7 +22,7 @@ def _load():
     sys.modules["usb.core"] = usb_core
     sys.modules["usb.util"] = usb_util
 
-    # Load constants first
+    # Load utils deps first (avoids importing the HA package __init__).
     for name, rel in (
         (
             "custom_components.my_leviton.utils.constants",
@@ -31,6 +31,10 @@ def _load():
         (
             "custom_components.my_leviton.utils.locks",
             "custom_components/my_leviton/utils/locks.py",
+        ),
+        (
+            "custom_components.my_leviton.utils.protocol",
+            "custom_components/my_leviton/utils/protocol.py",
         ),
     ):
         path = ROOT / rel
