@@ -66,11 +66,16 @@ def build_set_command(
     arg: int,
     *,
     fade: int = _FADE,
+    level: int = 0,
 ) -> bytes:
     """Build a full USB HID report for a set/on/off/level command.
 
     Layout:
-      02 | len | 01 7E | 25 0d bc 00 | type ch id_hi id_lo | 05 arg fade 00 00 00 | CS | 7F | 8F
+      02 | len | 01 7E | 25 0d bc 00 | type ch id_hi id_lo | 05 arg fade level 00 00 | CS | 7F | 8F
+
+    Captured on/off use arg=0x00/0x01 with level=0. Absolute dimmer levels keep
+    arg=ARG_ON (0x00) and put 1..100 in ``level`` — stuffing the percent into
+    ``arg`` made level 1 identical to OFF and caused random dead/off spots.
 
     CS is CRC-8/MAXIM over the bytes after 0x7E and before CS (unstuffed).
     """
@@ -85,7 +90,7 @@ def build_set_command(
         _CMD_SET,
         arg & 0xFF,
         fade & 0xFF,
-        0x00,
+        level & 0xFF,
         0x00,
         0x00,
     ]
@@ -94,6 +99,25 @@ def build_set_command(
     body = [_PREFIX, _FRAME_START, *stuffed, _FRAME_END]
     length = len(body)
     return bytes([_REPORT_ID, length, *body, _TRAILER])
+
+
+def build_set_level_command(
+    device_type: int,
+    channel: int,
+    device_id: int,
+    level: int,
+    *,
+    fade: int = FADE_LEVEL,
+) -> bytes:
+    """Absolute dimmer level 0-100 (0 → off packet; 1-100 → ON + level byte)."""
+    level = max(LEVEL_MIN, min(LEVEL_MAX, int(level)))
+    if level <= 0:
+        return build_set_command(
+            device_type, channel, device_id, ARG_OFF, fade=fade, level=0
+        )
+    return build_set_command(
+        device_type, channel, device_id, ARG_ON, fade=fade, level=level
+    )
 
 
 def brightness_to_level(brightness: int, dim_start: int = 0) -> int:
@@ -114,19 +138,6 @@ def brightness_to_level(brightness: int, dim_start: int = 0) -> int:
     span = LEVEL_MAX - start
     level = start + round(span * (brightness / 255))
     return max(start, min(LEVEL_MAX, level))
-
-
-def level_to_arg(level: int) -> int:
-    """Map 0-100 level to the command argument byte for dimmers.
-
-    Uses the same 0..100 scale as status reports. Level 0 sends ARG_OFF (0x01),
-    which matches captured off packets; 1..100 are sent as absolute levels
-    (100 = 0x64). Plain ON without a level still uses ARG_ON (0x00) separately.
-    """
-    level = max(LEVEL_MIN, min(LEVEL_MAX, int(level)))
-    if level <= 0:
-        return ARG_OFF
-    return level
 
 
 def is_dimmer_type(device_type: int) -> bool:
