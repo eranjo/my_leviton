@@ -7,12 +7,12 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
-## Beta (1.1.0b4)
-Physical-button capture confirmed levels are **0–100**. Slider dead zones were likely from reusing the slow on/off fade (`0x03`) on every brightness step — absolute levels now use **instant fade (`0x00`)**. Install **1.1.0b4**, restart HA, then try the Työhuone katto slider from 0→100 and back.
+## Beta (1.1.0b5)
+**1.1.0b4 broke dimming** (fade `0x00` was ignored by the devices). **b5** restores fade `0x03` on absolute levels so the slider works again. Level scale is still 0–100 from the physical-button capture; mid-range feel still needs calibration.
 
 ## Still to do
 - Implement automatic discovery of devices on the bus network
-- Confirm dimmer feel after instant-fade fix on hardware
+- Improve dimmer mid-range response without breaking commands
 - Additional tasks to be determined...
 
 ## Features

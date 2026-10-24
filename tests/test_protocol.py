@@ -90,8 +90,9 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(packets[0][13], protocol.ARG_OFF)
         self.assertEqual(packets[50][13], 50)
         self.assertEqual(packets[100][13], 100)
-        # Absolute levels use fade=0 (instant); on/off keep fade=0x03.
+        # Absolute levels must use the same non-zero fade as on/off (0x03).
         self.assertEqual(packets[50][14], protocol.FADE_LEVEL)
+        self.assertEqual(protocol.FADE_LEVEL, protocol.FADE_ON_OFF)
         on_pkt = protocol.build_set_command(0x1E, 0x03, 0x0FCB, protocol.ARG_ON)
         self.assertEqual(on_pkt[14], protocol.FADE_ON_OFF)
         # All checksums (byte before 7F, accounting for stuffing) should differ
