@@ -80,7 +80,12 @@ def _clamp_level(value: int) -> Optional[int]:
 
 
 def _level_from_frame(frame: Sequence[int]) -> Optional[int]:
-    """Extract 0-100 dimmer level from a status or live-dim frame."""
+    """Extract 0-100 dimmer level from a status or live-dim frame.
+
+    Also handles glued/command-echo frames seen during probe::
+      7e type ch id 25 0d bc 00 04 LEVEL ...
+    where a plain ``kind=frame[5]`` read would miss the ``04 LEVEL`` pair.
+    """
     if len(frame) < 6:
         return None
     kind = frame[5]
@@ -88,6 +93,13 @@ def _level_from_frame(frame: Sequence[int]) -> Optional[int]:
         return _clamp_level(frame[_STATUS_LEVEL_INDEX])
     if kind == _KIND_LIVE and len(frame) > _LIVE_LEVEL_INDEX:
         return _clamp_level(frame[_LIVE_LEVEL_INDEX])
+    # Command header stuffed after the address, then a normal status.
+    if (
+        len(frame) >= 11
+        and list(frame[5:9]) == [0x25, 0x0D, 0xBC, 0x00]
+        and frame[9] == _KIND_STATUS
+    ):
+        return _clamp_level(frame[10])
     return None
 
 
@@ -98,6 +110,8 @@ def _kind_label(kind: Optional[int]) -> str:
         return "live"
     if kind is None:
         return "kind=?"
+    if kind == 0x25:
+        return "cmdhdr"
     return f"kind=0x{kind:02x}"
 
 
@@ -387,8 +401,10 @@ def _read_light_level(
             )
             if level is not None:
                 last_level = level
-                # Prefer a settled status frame; keep scanning briefly if live.
-                if kind == _KIND_STATUS:
+                # Prefer a settled status (plain 0x04 or cmd-header+0x04).
+                if kind == _KIND_STATUS or (
+                    kind == 0x25 and level is not None
+                ):
                     notes.append(
                         f"wait_ok frames={frames_seen} matched={matched_frames}"
                     )
@@ -414,6 +430,7 @@ def probe_level(
     level_in_arg: bool = False,
     settle_sec: float = 0.5,
     wait_sec: float = 20.0,
+    reset_before: bool = True,
     on_event: Optional[Callable[[str], None]] = None,
 ) -> List[str]:
     """Send SET packets and log the status level the device reports back.
@@ -423,12 +440,15 @@ def probe_level(
 
     Encoding knobs for A/B tests:
       - default: ``05 ARG_ON fade LEVEL`` (level 0 → ARG_OFF)
-      - ``level_in_arg=True``: put percent in the arg byte (legacy broken layout)
+      - ``level_in_arg=True``: put percent in the arg byte
       - ``arg`` / ``fade``: override those bytes explicitly
 
     ``wait_sec`` is how long to drain status for *this* light after each SET.
     Polls are intentionally slow (~2s) so the stick can finish streaming the
     full device list (fast re-poll was starving later addresses).
+
+    ``reset_before`` (default True) sends OFF and waits for level 0 before each
+    non-zero SET so a prior mid-level cannot contaminate the next sample.
     """
     light = lookup_light(light_name)
     if not light:
@@ -457,6 +477,18 @@ def probe_level(
         if on_event:
             on_event(msg)
 
+    def _write_packet(dev: usb.core.Device, packet: bytes, label: str) -> bool:
+        try:
+            written = dev.write(0x01, packet, timeout=1000)
+            ok = written == len(packet)
+        except usb.core.USBError as err:
+            emit(f"PROBE_TX_FAIL {label} err={err}")
+            return False
+        if not ok:
+            emit(f"PROBE_TX_FAIL {label} short_write")
+            return False
+        return True
+
     with _open_usb() as dev:
         emit(
             f"PROBE start light={light_name!r} "
@@ -465,6 +497,7 @@ def probe_level(
             f"levels={levels[0]}..{levels[-1]} n={len(levels)} "
             f"fade=0x{fade_byte:02x} level_in_arg={level_in_arg} "
             f"arg_override={None if arg is None else f'0x{arg:02x}'} "
+            f"reset_before={reset_before} "
             f"settle={settle_sec}s wait={wait_sec}s poll_gap=2.0s"
         )
         emit(
@@ -472,6 +505,31 @@ def probe_level(
         )
 
         for sent in levels:
+            if reset_before and sent > 0:
+                off_pkt = build_set_command(
+                    light["type"],
+                    light["channel"],
+                    light["device_id"],
+                    ARG_OFF,
+                    fade=fade_byte,
+                    level=0,
+                )
+                if _write_packet(dev, off_pkt, f"reset_off before={sent}"):
+                    emit(f"PROBE_RESET before={sent} tx={_hex(off_pkt)}")
+                    baselined, base_notes = _read_light_level(
+                        dev,
+                        light,
+                        settle_sec=settle_sec,
+                        wait_sec=wait_sec,
+                        poll_interval_sec=2.0,
+                    )
+                    for note in base_notes[-3:]:
+                        emit(f"PROBE_RESET_RX before={sent} {note}")
+                    emit(
+                        f"PROBE_RESET_RESULT before={sent} "
+                        f"reported={baselined}"
+                    )
+
             arg_b, level_b = _resolve_arg_level(
                 sent, arg, level_in_arg=level_in_arg
             )
@@ -483,15 +541,7 @@ def probe_level(
                 fade=fade_byte,
                 level=level_b,
             )
-            try:
-                written = dev.write(0x01, packet, timeout=1000)
-                ok = written == len(packet)
-            except usb.core.USBError as err:
-                emit(f"PROBE_TX_FAIL sent={sent} err={err}")
-                continue
-
-            if not ok:
-                emit(f"PROBE_TX_FAIL sent={sent} short_write")
+            if not _write_packet(dev, packet, f"sent={sent}"):
                 continue
 
             emit(
