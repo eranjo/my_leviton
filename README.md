@@ -7,12 +7,12 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
-## Beta (1.1.0b3)
-Dimmer brightness is still being calibrated. Install **1.1.0b3**, restart HA, then use **Developer Tools → Services → `my_leviton.listen_dimmer`** (light `Työhuone katto`, ~90s) while you dim with the physical button. Paste `/config/my_leviton_capture.log` (or the `CAPTURE` log lines) back so we can fix the level encoding.
+## Beta (1.1.0b4)
+Physical-button capture confirmed levels are **0–100**. Slider dead zones were likely from reusing the slow on/off fade (`0x03`) on every brightness step — absolute levels now use **instant fade (`0x00`)**. Install **1.1.0b4**, restart HA, then try the Työhuone katto slider from 0→100 and back.
 
 ## Still to do
 - Implement automatic discovery of devices on the bus network
-- Confirm dimmer absolute-level encoding on hardware (0–100 in the command arg)
+- Confirm dimmer feel after instant-fade fix on hardware
 - Additional tasks to be determined...
 
 ## Features

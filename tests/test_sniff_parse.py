@@ -56,13 +56,37 @@ class SniffParseTests(unittest.TestCase):
     def test_match_tyohuone_katto(self):
         light = sniff.lookup_light("Työhuone katto")
         self.assertIsNotNone(light)
-        # Synthetic status frame: 7E type ch id_hi id_lo ?? level
-        frame = [0x7E, 0x1E, 0x03, 0x10, 0x52, 0x00, 0x32, 0x7F]
+        # Settled status from capture: 7E type ch id 04 LEVEL ...
+        frame = [0x7E, 0x1E, 0x03, 0x10, 0x52, 0x04, 0x32, 0x27, 0x7F]
         self.assertTrue(sniff._match_light(frame, light))
         self.assertEqual(sniff._level_from_frame(frame), 0x32)
 
+    def test_live_dim_level_not_byte6(self):
+        # Physical dim stream: level is at index 10, not the 0x03 at index 6.
+        frame = [
+            0x7E,
+            0x1E,
+            0x03,
+            0x10,
+            0x52,
+            0x22,
+            0x03,
+            0x0D,
+            0xBB,
+            0x03,
+            0x40,
+            0x00,
+            0xE7,
+            0x7F,
+        ]
+        self.assertEqual(sniff._level_from_frame(frame), 0x40)
+
+    def test_reject_garbage_level(self):
+        frame = [0x7E, 0x1E, 0x03, 0x10, 0x52, 0x04, 0xEF, 0x7F]
+        self.assertIsNone(sniff._level_from_frame(frame))
+
     def test_extract_frames(self):
-        raw = [0x00, 0x7E, 0x1E, 0x03, 0x10, 0x52, 0x00, 0x20, 0x7F, 0x00]
+        raw = [0x00, 0x7E, 0x1E, 0x03, 0x10, 0x52, 0x04, 0x20, 0x7F, 0x00]
         frames = sniff._extract_frames(raw)
         self.assertEqual(len(frames), 1)
         self.assertEqual(frames[0][0], 0x7E)

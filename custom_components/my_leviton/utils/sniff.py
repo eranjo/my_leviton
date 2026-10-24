@@ -13,9 +13,13 @@ from .locks import initialize_usb_lock
 
 _LOGGER = logging.getLogger(__name__)
 
-# Status frame after 0x7E (from historical polling parser):
-#   [0]=7E [1]=type [2]=channel [3]=id_hi [4]=id_lo [5]=? [6]=level
+# Captured Työhuone katto frames (physical dim):
+#   Settled status:  7e type ch id_hi id_lo 04 LEVEL ...
+#   Live while dim:  7e type ch id_hi id_lo 22 03 0d bb 03 LEVEL 00 ...
+_KIND_STATUS = 0x04
+_KIND_LIVE = 0x22
 _STATUS_LEVEL_INDEX = 6
+_LIVE_LEVEL_INDEX = 10
 
 
 def lookup_light(name: str) -> Optional[Dict]:
@@ -61,10 +65,23 @@ def _match_light(frame: Sequence[int], light: Dict) -> bool:
     )
 
 
+def _clamp_level(value: int) -> Optional[int]:
+    """Accept Leviton percent levels 0..100; ignore truncated/garbage bytes."""
+    if 0 <= value <= 100:
+        return value
+    return None
+
+
 def _level_from_frame(frame: Sequence[int]) -> Optional[int]:
-    if len(frame) <= _STATUS_LEVEL_INDEX:
+    """Extract 0-100 dimmer level from a status or live-dim frame."""
+    if len(frame) < 6:
         return None
-    return frame[_STATUS_LEVEL_INDEX]
+    kind = frame[5]
+    if kind == _KIND_STATUS and len(frame) > _STATUS_LEVEL_INDEX:
+        return _clamp_level(frame[_STATUS_LEVEL_INDEX])
+    if kind == _KIND_LIVE and len(frame) > _LIVE_LEVEL_INDEX:
+        return _clamp_level(frame[_LIVE_LEVEL_INDEX])
+    return None
 
 
 def listen_dimmer(
@@ -153,6 +170,16 @@ def listen_dimmer(
                         continue
                     matched = True
                     hits += 1
+                    kind = frame[5] if len(frame) > 5 else None
+                    kind_label = (
+                        "status"
+                        if kind == _KIND_STATUS
+                        else "live"
+                        if kind == _KIND_LIVE
+                        else f"kind=0x{kind:02x}"
+                        if kind is not None
+                        else "kind=?"
+                    )
                     level = _level_from_frame(frame)
                     changed = level != last_level
                     last_level = level
@@ -160,11 +187,12 @@ def listen_dimmer(
                     if level is not None:
                         emit(
                             f"{marker} {light_name}: level={level} "
-                            f"(0x{level:02x}) frame={_hex(frame)}"
+                            f"(0x{level:02x}) {kind_label} frame={_hex(frame)}"
                         )
                     else:
                         emit(
-                            f"{marker} {light_name}: level=? frame={_hex(frame)}"
+                            f"{marker} {light_name}: level=? {kind_label} "
+                            f"frame={_hex(frame)}"
                         )
 
                 if not matched and frames:

@@ -78,12 +78,22 @@ class ProtocolTests(unittest.TestCase):
     def test_dimmer_levels_change_checksum(self):
         """Intermediate dimmer levels must produce distinct valid frames."""
         packets = {
-            level: protocol.build_set_command(0x1E, 0x03, 0x0FCB, protocol.level_to_arg(level))
+            level: protocol.build_set_command(
+                0x1E,
+                0x03,
+                0x0FCB,
+                protocol.level_to_arg(level),
+                fade=protocol.FADE_LEVEL,
+            )
             for level in (0, 25, 50, 75, 100)
         }
         self.assertEqual(packets[0][13], protocol.ARG_OFF)
         self.assertEqual(packets[50][13], 50)
         self.assertEqual(packets[100][13], 100)
+        # Absolute levels use fade=0 (instant); on/off keep fade=0x03.
+        self.assertEqual(packets[50][14], protocol.FADE_LEVEL)
+        on_pkt = protocol.build_set_command(0x1E, 0x03, 0x0FCB, protocol.ARG_ON)
+        self.assertEqual(on_pkt[14], protocol.FADE_ON_OFF)
         # All checksums (byte before 7F, accounting for stuffing) should differ
         # for distinct levels — compare full packets.
         self.assertEqual(len(set(packets.values())), 5)
