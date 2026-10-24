@@ -32,9 +32,18 @@ def dim_start_for(hass: HomeAssistant, light_name: str) -> int:
     return 0
 
 
-def _write_capture(hass: HomeAssistant, filename: str, lines: List[str]) -> str:
+def _write_capture(
+    hass: HomeAssistant,
+    filename: str,
+    lines: List[str],
+    *,
+    append: bool = False,
+) -> str:
     path = hass.config.path(filename)
-    with open(path, "w", encoding="utf-8") as handle:
+    mode = "a" if append else "w"
+    with open(path, mode, encoding="utf-8") as handle:
+        if append and lines:
+            handle.write("\n----- probe run -----\n")
         handle.write("\n".join(lines) + "\n")
     return path
 
@@ -44,10 +53,12 @@ async def _run_capture(
     filename: str,
     runner: Callable[[], List[str]],
     label: str,
+    *,
+    append: bool = False,
 ) -> None:
     def _job() -> tuple[str, list[str]]:
         lines = runner()
-        path = _write_capture(hass, filename, lines)
+        path = _write_capture(hass, filename, lines, append=append)
         return path, lines
 
     try:
@@ -142,8 +153,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 reset_before=reset_before,
             )
 
+        # Append so multi-step scripts keep every probe in one file.
         await _run_capture(
-            hass, "my_leviton_probe.log", _run, SERVICE_PROBE_LEVEL
+            hass,
+            "my_leviton_probe.log",
+            _run,
+            SERVICE_PROBE_LEVEL,
+            append=True,
         )
 
     hass.services.async_register(DOMAIN, SERVICE_LISTEN_DIMMER, async_listen_dimmer)

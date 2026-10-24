@@ -7,7 +7,7 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
-## Beta (1.1.0b11)
+## Beta (1.1.0b12)
 **Reverse-engineering actions** — Developer Tools → Actions → paste YAML → Run:
 
 ### Single level probe (preferred for encoding A/B)
@@ -31,7 +31,7 @@ data:
   wait: 20
 ```
 
-Evidence so far: `05 00 fade LEVEL` forces **100%**; percent-in-arg at least moves the dimmer (10→61). Prefer **single-level** probes. `reset_before` (default true) OFFs first so samples stay independent.
+Evidence so far: `05 00 fade LEVEL` forces **100%**; `arg=0x0a` looks like ON-to-last-level. Prefer **single-level** / scripted probes. `my_leviton_probe.log` **appends** so multi-step scripts keep every run.
 
 ### Dump whole bus
 ```yaml
