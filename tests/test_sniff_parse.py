@@ -89,6 +89,28 @@ class SniffParseTests(unittest.TestCase):
         frame = [0x7E, 0x1E, 0x03, 0x10, 0x52, 0x04, 0xEF, 0x7F]
         self.assertIsNone(sniff._level_from_frame(frame))
 
+    def test_level_from_cmdhdr_glued_status(self):
+        # Probe saw these during level_in_arg: address + 25 0d bc 00 + 04 LEVEL
+        frame = [
+            0x7E,
+            0x1E,
+            0x03,
+            0x10,
+            0x52,
+            0x25,
+            0x0D,
+            0xBC,
+            0x00,
+            0x04,
+            0x3D,
+            0x27,
+            0x21,
+            0x13,
+            0x83,
+            0x00,
+        ]
+        self.assertEqual(sniff._level_from_frame(frame), 61)
+
     def test_extract_frames(self):
         raw = [0x00, 0x7E, 0x1E, 0x03, 0x10, 0x52, 0x04, 0x20, 0x7F, 0x00]
         frames = sniff._extract_frames(raw)
