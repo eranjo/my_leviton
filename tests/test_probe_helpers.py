@@ -88,6 +88,75 @@ class ProbeHelperTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sniff.probe_level("Työhuone katto", level=None, sweep=False)
 
+    def test_read_light_level_waits_for_target_status(self):
+        """Simulate round-robin: other devices first, then the target."""
+        light = {
+            "name": "Työhuone katto",
+            "type": 0x1E,
+            "channel": 0x03,
+            "device_id": 0x1052,
+            "dimmer": True,
+        }
+        other = [0x7E, 0x1E, 0x01, 0x00, 0x11, 0x04, 0x40, 0x00, 0x7F]
+        target = [0x7E, 0x1E, 0x03, 0x10, 0x52, 0x04, 0x32, 0x00, 0x7F]
+        reads = [
+            other + [0xFF] * (64 - len(other)),
+            other + [0xFF] * (64 - len(other)),
+            target + [0xFF] * (64 - len(target)),
+        ]
+
+        class FakeDev:
+            def __init__(self) -> None:
+                self.writes = 0
+
+            def write(self, _ep, _data, timeout=1000):  # noqa: ANN001
+                self.writes += 1
+                return len(_data)
+
+            def read(self, _ep, _size, timeout=400):  # noqa: ANN001
+                if not reads:
+                    raise sniff.usb.core.USBError("timed out")
+                return reads.pop(0)
+
+        level, notes = sniff._read_light_level(
+            FakeDev(),
+            light,
+            settle_sec=0.0,
+            wait_sec=2.0,
+            poll_interval_sec=0.01,
+        )
+        self.assertEqual(level, 50)
+        self.assertTrue(any("wait_ok" in n for n in notes))
+        self.assertTrue(any("level=50" in n for n in notes))
+
+    def test_read_light_level_timeout_notes_activity(self):
+        light = {
+            "name": "Työhuone katto",
+            "type": 0x1E,
+            "channel": 0x03,
+            "device_id": 0x1052,
+            "dimmer": True,
+        }
+        other = [0x7E, 0x1E, 0x01, 0x00, 0x11, 0x04, 0x40, 0x00, 0x7F]
+
+        class FakeDev:
+            def write(self, _ep, _data, timeout=1000):  # noqa: ANN001
+                return len(_data)
+
+            def read(self, _ep, _size, timeout=400):  # noqa: ANN001
+                return other + [0xFF] * (64 - len(other))
+
+        level, notes = sniff._read_light_level(
+            FakeDev(),
+            light,
+            settle_sec=0.0,
+            wait_sec=0.6,
+            poll_interval_sec=0.05,
+        )
+        self.assertIsNone(level)
+        self.assertTrue(any("wait_timeout" in n for n in notes))
+        self.assertTrue(any("frames=" in n for n in notes))
+
 
 if __name__ == "__main__":
     unittest.main()

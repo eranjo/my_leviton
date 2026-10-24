@@ -7,7 +7,7 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
-## Beta (1.1.0b8)
+## Beta (1.1.0b9)
 **Reverse-engineering actions** — Developer Tools → Actions → paste YAML → Run:
 
 ### Single level probe (start here)
@@ -16,6 +16,7 @@ action: my_leviton.probe_level
 data:
   light: Työhuone katto
   level: 50
+  wait: 12
 ```
 
 ### Level sweep (sent vs reported table)
@@ -24,8 +25,11 @@ action: my_leviton.probe_level
 data:
   light: Työhuone katto
   sweep: true
-  step: 5
+  step: 10
+  wait: 12
 ```
+
+`wait` is how long each SET keeps polling for *that* light’s status (bus round-robins ~60 devices; short waits used to report `match=none`).
 
 ### Dump whole bus
 ```yaml

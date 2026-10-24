@@ -122,7 +122,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         fade = call.data.get("fade")
         arg = call.data.get("arg")
         level_in_arg = bool(call.data.get("level_in_arg", False))
-        settle = float(call.data.get("settle", 0.8))
+        settle = float(call.data.get("settle", 0.5))
+        wait = float(call.data.get("wait", 12.0))
 
         def _run() -> list[str]:
             from .utils.sniff import probe_level
@@ -136,6 +137,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 fade=None if fade is None else int(fade),
                 level_in_arg=level_in_arg,
                 settle_sec=settle,
+                wait_sec=wait,
             )
 
         await _run_capture(
