@@ -1,0 +1,22 @@
+listen_dimmer:
+  name: Listen dimmer
+  description: >
+    Capture USB status frames for one dimmer while you use its physical
+    button. Holds the USB stick for the duration; check the HA log and
+    /config/my_leviton_capture.log afterward.
+  fields:
+    light:
+      name: Light
+      description: Exact light name from the integration (default Työhuone katto)
+      example: Työhuone katto
+      selector:
+        text:
+    duration:
+      name: Duration (seconds)
+      description: How long to listen
+      default: 90
+      selector:
+        number:
+          min: 10
+          max: 300
+          unit_of_measurement: seconds

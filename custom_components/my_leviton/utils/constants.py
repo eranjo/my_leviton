@@ -4,6 +4,28 @@
 VID = 0x04D8
 PID = 0xFE93
 
+# Ask the stick for status of all devices (from original polling code).
+POLL_COMMAND = [
+    0x02,
+    0x0F,
+    0x01,
+    0x7E,
+    0x25,
+    0x0D,
+    0xBC,
+    0x00,
+    0xFF,
+    0xFF,
+    0xFF,
+    0xFF,
+    0x02,
+    0x01,
+    0x00,
+    0xFE,
+    0x7F,
+    0x45,
+]
+
 # Lights are addressed by (type, channel, device_id). Packets are built at
 # runtime with CRC-8/MAXIM — see utils/protocol.py.
 # type 0x26 = relay/switch, 0x1E/0x2E = dimmer (level 0-100).

@@ -7,8 +7,8 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
-## Beta (1.1.0b2)
-Checksum-built packets + dimmer brightness, plus a fix for duplicated entities after the b1 install (`light.casper_katto_dimmer` vs `light.leviton_usb_lighting_casper_katto_dimmer`). Install **1.1.0b2** in HACS, restart HA — duplicates are cleaned up on setup. Do not re-add the integration.
+## Beta (1.1.0b3)
+Dimmer brightness is still being calibrated. Install **1.1.0b3**, restart HA, then use **Developer Tools → Services → `my_leviton.listen_dimmer`** (light `Työhuone katto`, ~90s) while you dim with the physical button. Paste `/config/my_leviton_capture.log` (or the `CAPTURE` log lines) back so we can fix the level encoding.
 
 ## Still to do
 - Implement automatic discovery of devices on the bus network

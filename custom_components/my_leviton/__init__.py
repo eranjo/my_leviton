@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 
 from .const import DOMAIN, PLATFORMS, UNIQUE_ID
 from .entity_cleanup import (
@@ -13,6 +13,9 @@ from .entity_cleanup import (
 from .utils.commands import send_light_command
 
 _LOGGER = logging.getLogger(__name__)
+
+DEFAULT_LISTEN_LIGHT = "Työhuone katto"
+SERVICE_LISTEN_DIMMER = "listen_dimmer"
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -36,11 +39,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("Removed %s duplicate Leviton light entit(y/ies)", removed)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    async def async_listen_dimmer(call: ServiceCall) -> None:
+        """Capture USB frames while the physical dimmer is used."""
+        light = call.data.get("light", DEFAULT_LISTEN_LIGHT)
+        duration = float(call.data.get("duration", 90))
+
+        def _run() -> tuple[str, list[str]]:
+            from .utils.sniff import listen_dimmer
+
+            lines = listen_dimmer(light, duration)
+            path = hass.config.path("my_leviton_capture.log")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+            return path, lines
+
+        try:
+            path, lines = await hass.async_add_executor_job(_run)
+        except Exception as err:  # noqa: BLE001 — surface to HA log for the user
+            _LOGGER.exception("listen_dimmer failed: %s", err)
+            return
+
+        _LOGGER.warning(
+            "listen_dimmer finished (%s events). Capture file: %s",
+            len(lines),
+            path,
+        )
+        # Also dump into the log so it can be copied from Settings → Logs.
+        for line in lines:
+            _LOGGER.warning("CAPTURE %s", line)
+
+    hass.services.async_register(DOMAIN, SERVICE_LISTEN_DIMMER, async_listen_dimmer)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    if hass.services.has_service(DOMAIN, SERVICE_LISTEN_DIMMER):
+        hass.services.async_remove(DOMAIN, SERVICE_LISTEN_DIMMER)
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data.get(DOMAIN, {}).pop("lights_added", None)
