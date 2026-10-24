@@ -7,21 +7,30 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
-## Beta (1.1.0b7)
-**Fix:** absolute dimmer levels were stuffed into the on/off arg byte (so level `1` = OFF, and other values glitched — e.g. ~92% off). Levels now use `05 00 fade LEVEL` like captured on packets.
+## Beta (1.1.0b8)
+**Reverse-engineering services** (Developer Tools → Services):
 
-Each dimmer still has a **dim start** number entity (0–100%) for hardware low-end trim. Try dim start `0` first after upgrading; then calibrate.
+| Service | What it does | Output |
+|---|---|---|
+| `my_leviton.listen_dimmer` | Capture while you use the wall paddle | `/config/my_leviton_capture.log` |
+| `my_leviton.dump_bus` | Poll and log **every** framed packet | `/config/my_leviton_bus_dump.log` |
+| `my_leviton.probe_level` | Send SET → poll status (single level or sweep) | `/config/my_leviton_probe.log` |
+
+`probe_level` supports encoding A/B via `fade`, `arg`, and `level_in_arg`. Prefer evidence from these logs before changing SET encoding again.
+
+Each dimmer still has a **dim start** number entity (0–100%) for hardware low-end trim.
 
 ## Still to do
 - Implement automatic discovery of devices on the bus network
 - Optional auto-probe for dim start
-- Additional tasks to be determined...
+- Fix absolute level encoding once probe tables confirm the wire layout
 
 ## Features
 - Local USB communication (requires `pyusb`)
 - Implements `light` platform (on/off relays + brightness dimmers)
 - CRC-8/MAXIM checksum when building USB packets
 - No cloud dependency
+- USB capture / dump / probe services for protocol reverse-engineering
 
 ## Installation
 

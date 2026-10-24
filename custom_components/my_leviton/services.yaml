@@ -20,3 +20,90 @@ listen_dimmer:
           min: 10
           max: 300
           unit_of_measurement: seconds
+
+dump_bus:
+  name: Dump bus
+  description: >
+    Poll the VRUSB stick and log every framed packet (no light filter).
+    Use to discover unknown devices/opcodes. Writes
+    /config/my_leviton_bus_dump.log and the HA log.
+  fields:
+    duration:
+      name: Duration (seconds)
+      description: How long to poll the bus
+      default: 30
+      selector:
+        number:
+          min: 5
+          max: 300
+          unit_of_measurement: seconds
+
+probe_level:
+  name: Probe level
+  description: >
+    Send absolute SET packets to one dimmer and log the status level it
+    reports back (write→poll→log). Use a single level or sweep 0..100.
+    Optional arg/fade/level_in_arg for encoding A/B tests. Writes
+    /config/my_leviton_probe.log (includes PROBE_CSV rows).
+  fields:
+    light:
+      name: Light
+      description: Exact dimmer name (default Työhuone katto)
+      example: Työhuone katto
+      selector:
+        text:
+    level:
+      name: Level
+      description: Single level 0-100 (ignored when Sweep is on)
+      selector:
+        number:
+          min: 0
+          max: 100
+    sweep:
+      name: Sweep
+      description: Walk 0..100 by Step instead of a single level
+      default: false
+      selector:
+        boolean:
+    step:
+      name: Step
+      description: Sweep step size (always includes 0 and 100)
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 100
+    fade:
+      name: Fade byte
+      description: Override fade (default 0x03 / 3). Leave empty for default.
+      selector:
+        number:
+          min: 0
+          max: 255
+    arg:
+      name: Arg byte
+      description: >
+        Override SET arg byte. Leave empty for default (OFF=1 at level 0,
+        ON=0 otherwise).
+      selector:
+        number:
+          min: 0
+          max: 255
+    level_in_arg:
+      name: Level in arg
+      description: >
+        Put the percent into the arg byte instead of the level data byte
+        (legacy broken layout — for A/B comparison only).
+      default: false
+      selector:
+        boolean:
+    settle:
+      name: Settle (seconds)
+      description: Wait after each SET before polling status
+      default: 0.8
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.1
+          unit_of_measurement: seconds
