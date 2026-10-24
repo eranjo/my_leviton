@@ -151,11 +151,13 @@ class ProbeHelperTests(unittest.TestCase):
             light,
             settle_sec=0.0,
             wait_sec=0.6,
-            poll_interval_sec=0.05,
+            poll_interval_sec=1.5,
         )
         self.assertIsNone(level)
         self.assertTrue(any("wait_timeout" in n for n in notes))
         self.assertTrue(any("frames=" in n for n in notes))
+        self.assertTrue(any("seen=" in n for n in notes))
+        self.assertTrue(any("0x1e/0x01/0x0011" in n for n in notes))
 
 
 if __name__ == "__main__":
