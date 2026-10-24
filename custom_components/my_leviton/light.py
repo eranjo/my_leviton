@@ -1,11 +1,20 @@
 # light.py
+from __future__ import annotations
+
 from homeassistant.components.light import ATTR_BRIGHTNESS, ColorMode, LightEntity
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.util import slugify
 
 from . import turn_light_brightness, turn_light_off, turn_light_on
+from .const import DOMAIN
 
 
 class LevitonLight(LightEntity):
     """Represents a Leviton light entity in Home Assistant."""
+
+    # Keep legacy entity_id form (light.casper_katto_dimmer), not
+    # light.leviton_usb_lighting_casper_katto_dimmer.
+    _attr_has_entity_name = False
 
     def __init__(self, name: str, *, dimmer: bool = False):
         self._name = name
@@ -14,6 +23,8 @@ class LevitonLight(LightEntity):
         self._dimmer = dimmer
         self._attr_name = name
         self._attr_unique_id = f"my_leviton::{name}"
+        # suggested_object_id is NOT device-prefixed by HA — keeps short IDs.
+        self._attr_suggested_object_id = slugify(name)
         if dimmer:
             self._attr_supported_color_modes = {ColorMode.BRIGHTNESS}
             self._attr_color_mode = ColorMode.BRIGHTNESS
@@ -58,30 +69,28 @@ class LevitonLight(LightEntity):
             self.async_write_ha_state()
 
     @property
-    def device_info(self):
-        return {
-            "identifiers": {("my_leviton", "usb_controller")},
-            "manufacturer": "Leviton",
-            "name": "Leviton USB Lighting",
-            "model": "USB Controller",
-        }
+    def device_info(self) -> DeviceInfo:
+        # Identifier must stay ("my_leviton", "usb_controller") so we do not
+        # create a second device next to existing installs.
+        return DeviceInfo(
+            identifiers={(DOMAIN, "usb_controller")},
+            manufacturer="Leviton",
+            name="Leviton USB Lighting",
+            model="USB Controller",
+        )
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     from .utils.constants import LIGHTS
+
+    # Guard against double registration within one hass instance.
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if domain_data.get("lights_added"):
+        return
+    domain_data["lights_added"] = True
 
     entities = [
         LevitonLight(light["name"], dimmer=bool(light.get("dimmer")))
         for light in LIGHTS
     ]
     async_add_entities(entities, update_before_add=False)
-
-
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    from .utils.constants import LIGHTS
-
-    lights = [
-        LevitonLight(light["name"], dimmer=bool(light.get("dimmer")))
-        for light in LIGHTS
-    ]
-    add_entities(lights)

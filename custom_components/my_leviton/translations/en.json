@@ -6,6 +6,7 @@
       }
     },
     "abort": {
+      "already_configured": "My Leviton (USB) is already configured.",
       "single_instance_allowed": "This integration is already configured."
     }
   },
