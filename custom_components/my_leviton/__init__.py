@@ -5,7 +5,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 
-from .const import DOMAIN, PLATFORMS, UNIQUE_ID
+from .const import DOMAIN, OPTIONS_DIM_START, PLATFORMS, UNIQUE_ID
 from .entity_cleanup import (
     async_cleanup_duplicate_lights,
     async_remove_extra_config_entries,
@@ -16,6 +16,17 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_LISTEN_LIGHT = "Työhuone katto"
 SERVICE_LISTEN_DIMMER = "listen_dimmer"
+
+
+def dim_start_for(hass: HomeAssistant, light_name: str) -> int:
+    """Return configured hardware dim-start (0-100) for a light, or 0."""
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        raw = entry.options.get(OPTIONS_DIM_START, {}).get(light_name, 0)
+        try:
+            return max(0, min(100, int(raw)))
+        except (TypeError, ValueError):
+            return 0
+    return 0
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -91,8 +102,10 @@ def turn_light_off(light_name: str) -> bool:
     return send_light_command(light_name, "off")
 
 
-def turn_light_brightness(light_name: str, brightness: int) -> bool:
+def turn_light_brightness(
+    light_name: str, brightness: int, dim_start: int = 0
+) -> bool:
     """Set dimmer brightness (Home Assistant 0-255 scale)."""
     from .utils.commands import send_light_brightness
 
-    return send_light_brightness(light_name, brightness)
+    return send_light_brightness(light_name, brightness, dim_start=dim_start)

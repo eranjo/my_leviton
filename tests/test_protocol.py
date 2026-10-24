@@ -104,6 +104,17 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(protocol.brightness_to_level(255), 100)
         self.assertEqual(protocol.brightness_to_level(128), 50)
 
+    def test_brightness_mapping_with_dim_start(self):
+        # Off stays off; full stays full; mid maps into start..100.
+        self.assertEqual(protocol.brightness_to_level(0, dim_start=60), 0)
+        self.assertEqual(protocol.brightness_to_level(255, dim_start=60), 100)
+        # Smallest non-zero HA brightness → near dim_start.
+        self.assertEqual(protocol.brightness_to_level(1, dim_start=60), 60)
+        mid = protocol.brightness_to_level(128, dim_start=60)
+        self.assertGreaterEqual(mid, 60)
+        self.assertLessEqual(mid, 100)
+        self.assertEqual(mid, 60 + round(40 * (128 / 255)))
+
 
 if __name__ == "__main__":
     unittest.main()

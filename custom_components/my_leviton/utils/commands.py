@@ -80,6 +80,10 @@ def send_light_level(light_name: str, level: int) -> bool:
     return _send_arg(light, level_to_arg(level), fade=FADE_LEVEL)
 
 
-def send_light_brightness(light_name: str, brightness: int) -> bool:
+def send_light_brightness(
+    light_name: str, brightness: int, *, dim_start: int = 0
+) -> bool:
     """Send Home Assistant brightness 0-255 for a dimmer."""
-    return send_light_level(light_name, brightness_to_level(brightness))
+    return send_light_level(
+        light_name, brightness_to_level(brightness, dim_start=dim_start)
+    )

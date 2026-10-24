@@ -5,7 +5,7 @@ from homeassistant.components.light import ATTR_BRIGHTNESS, ColorMode, LightEnti
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.util import slugify
 
-from . import turn_light_brightness, turn_light_off, turn_light_on
+from . import dim_start_for, turn_light_brightness, turn_light_off, turn_light_on
 from .const import DOMAIN
 
 
@@ -43,8 +43,9 @@ class LevitonLight(LightEntity):
     async def async_turn_on(self, **kwargs):
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         if self._dimmer and brightness is not None:
+            start = dim_start_for(self.hass, self._name)
             ok = await self.hass.async_add_executor_job(
-                turn_light_brightness, self._name, brightness
+                turn_light_brightness, self._name, brightness, start
             )
             if ok:
                 self._is_on = brightness > 0

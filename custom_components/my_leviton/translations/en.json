@@ -2,12 +2,20 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up My Leviton (USB)"
+        "title": "Set up My Leviton (USB)",
+        "description": "Connects to the Leviton VRUSB stick. After setup, set each dimmer's **dim start** number entity to the first brightness where the lamp actually lights (hardware low-end trim)."
       }
     },
     "abort": {
       "already_configured": "My Leviton (USB) is already configured.",
       "single_instance_allowed": "This integration is already configured."
+    }
+  },
+  "entity": {
+    "number": {
+      "dim_start": {
+        "name": "Dim start"
+      }
     }
   },
   "title": "My Leviton (USB)"

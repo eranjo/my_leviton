@@ -96,13 +96,24 @@ def build_set_command(
     return bytes([_REPORT_ID, length, *body, _TRAILER])
 
 
-def brightness_to_level(brightness: int) -> int:
-    """Map Home Assistant brightness (0-255) to Leviton level (0-100)."""
+def brightness_to_level(brightness: int, dim_start: int = 0) -> int:
+    """Map Home Assistant brightness (0-255) to Leviton level (0-100).
+
+    ``dim_start`` (0-100) is the hardware low-end / first visible level.
+    HA 0% → off, HA >0 maps linearly onto ``dim_start``..100 so the slider
+    uses the dimmer's usable range. ``dim_start=0`` keeps a plain 0..100 map.
+    """
     if brightness <= 0:
         return LEVEL_MIN
+    start = max(0, min(LEVEL_MAX, int(dim_start)))
     if brightness >= 255:
         return LEVEL_MAX
-    return max(1, min(LEVEL_MAX, round(brightness * LEVEL_MAX / 255)))
+    if start <= 0:
+        return max(1, min(LEVEL_MAX, round(brightness * LEVEL_MAX / 255)))
+    # Map 1..255 → start..100 (inclusive at both ends).
+    span = LEVEL_MAX - start
+    level = start + round(span * (brightness / 255))
+    return max(start, min(LEVEL_MAX, level))
 
 
 def level_to_arg(level: int) -> int:
