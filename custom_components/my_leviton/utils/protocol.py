@@ -26,7 +26,12 @@ _REPORT_ID = 0x02
 _PREFIX = 0x01
 _PAYLOAD_HEADER = (0x25, 0x0D, 0xBC, 0x00)
 _CMD_SET = 0x05
+# Captured on/off packets use fade=0x03 (~slow ramp). Absolute dimmer
+# levels from the HA slider must use fade=0 so each step is immediate;
+# otherwise mid-range slider moves feel like dead zones.
 _FADE = 0x03
+FADE_ON_OFF = _FADE
+FADE_LEVEL = 0x00
 
 
 def crc8_maxim(data: Iterable[int]) -> int:
