@@ -334,33 +334,57 @@ def _read_light_level(
     light: Dict,
     *,
     settle_sec: float,
-    polls: int,
+    wait_sec: float,
     poll_interval_sec: float,
 ) -> Tuple[Optional[int], List[str]]:
-    """After a SET, poll and return the last reported level for ``light``."""
+    """After a SET, poll until ``light`` status appears or ``wait_sec`` elapses.
+
+    The stick round-robins ~60 devices, so a fixed 2–3 poll window almost
+    always misses the target. Keep polling until we see a matching frame.
+    """
     notes: List[str] = []
     if settle_sec > 0:
         time.sleep(settle_sec)
 
     last_level: Optional[int] = None
-    for _ in range(max(1, polls)):
-        _poll(dev)
-        deadline = time.monotonic() + max(0.2, poll_interval_sec)
-        while time.monotonic() < deadline:
-            raw = _read_raw(dev, timeout_ms=300)
-            if raw is None:
+    frames_seen = 0
+    matched_frames = 0
+    next_poll = 0.0
+    deadline = time.monotonic() + max(0.5, wait_sec)
+
+    while time.monotonic() < deadline:
+        now = time.monotonic()
+        if now >= next_poll:
+            _poll(dev)
+            next_poll = now + max(0.15, poll_interval_sec)
+
+        raw = _read_raw(dev, timeout_ms=250)
+        if raw is None:
+            continue
+
+        for frame in _extract_frames(raw):
+            frames_seen += 1
+            if not _match_light(frame, light):
                 continue
-            for frame in _extract_frames(raw):
-                if not _match_light(frame, light):
-                    continue
-                level = _level_from_frame(frame)
-                kind = frame[5] if len(frame) > 5 else None
-                notes.append(
-                    f"rx {_kind_label(kind)} level={level} frame={_hex(frame)}"
-                )
-                if level is not None:
-                    last_level = level
-        time.sleep(min(0.15, poll_interval_sec))
+            matched_frames += 1
+            level = _level_from_frame(frame)
+            kind = frame[5] if len(frame) > 5 else None
+            notes.append(
+                f"rx {_kind_label(kind)} level={level} frame={_hex(frame)}"
+            )
+            if level is not None:
+                last_level = level
+                # Prefer a settled status frame; keep scanning briefly if live.
+                if kind == _KIND_STATUS:
+                    notes.append(
+                        f"wait_ok frames={frames_seen} matched={matched_frames}"
+                    )
+                    return last_level, notes
+
+    notes.append(
+        f"wait_timeout frames={frames_seen} matched={matched_frames} "
+        f"last_level={last_level}"
+    )
     return last_level, notes
 
 
@@ -373,8 +397,8 @@ def probe_level(
     arg: Optional[int] = None,
     fade: Optional[int] = None,
     level_in_arg: bool = False,
-    settle_sec: float = 0.8,
-    polls: int = 3,
+    settle_sec: float = 0.5,
+    wait_sec: float = 12.0,
     on_event: Optional[Callable[[str], None]] = None,
 ) -> List[str]:
     """Send SET packets and log the status level the device reports back.
@@ -386,6 +410,9 @@ def probe_level(
       - default: ``05 ARG_ON fade LEVEL`` (level 0 → ARG_OFF)
       - ``level_in_arg=True``: put percent in the arg byte (legacy broken layout)
       - ``arg`` / ``fade``: override those bytes explicitly
+
+    ``wait_sec`` is how long to poll for *this* light's status after each SET
+    (needed because the bus round-robins many devices).
     """
     light = lookup_light(light_name)
     if not light:
@@ -395,6 +422,7 @@ def probe_level(
 
     fade_byte = FADE_LEVEL if fade is None else (fade & 0xFF)
     step = max(1, min(100, int(step)))
+    wait_sec = max(1.0, float(wait_sec))
 
     if sweep:
         levels = list(range(0, 101, step))
@@ -416,10 +444,12 @@ def probe_level(
     with _open_usb() as dev:
         emit(
             f"PROBE start light={light_name!r} "
+            f"type=0x{light['type']:02x} ch=0x{light['channel']:02x} "
+            f"id=0x{light['device_id']:04x} "
             f"levels={levels[0]}..{levels[-1]} n={len(levels)} "
             f"fade=0x{fade_byte:02x} level_in_arg={level_in_arg} "
             f"arg_override={None if arg is None else f'0x{arg:02x}'} "
-            f"settle={settle_sec}s"
+            f"settle={settle_sec}s wait={wait_sec}s"
         )
         emit(
             "PROBE_CSV sent_level,arg,fade,level_byte,reported,match,tx_hex"
@@ -457,10 +487,10 @@ def probe_level(
                 dev,
                 light,
                 settle_sec=settle_sec,
-                polls=polls,
-                poll_interval_sec=0.4,
+                wait_sec=wait_sec,
+                poll_interval_sec=0.25,
             )
-            for note in notes[-3:]:
+            for note in notes[-5:]:
                 emit(f"PROBE_RX sent={sent} {note}")
 
             match = (
