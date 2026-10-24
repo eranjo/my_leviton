@@ -99,11 +99,24 @@ probe_level:
         boolean:
     settle:
       name: Settle (seconds)
-      description: Wait after each SET before polling status
-      default: 0.8
+      description: Brief pause after each SET before status polling starts
+      default: 0.5
       selector:
         number:
           min: 0
           max: 5
           step: 0.1
+          unit_of_measurement: seconds
+    wait:
+      name: Wait (seconds)
+      description: >
+        How long to keep polling for this light's status after each SET.
+        The stick round-robins many devices — short waits often miss it
+        (default 12s).
+      default: 12
+      selector:
+        number:
+          min: 1
+          max: 60
+          step: 1
           unit_of_measurement: seconds
