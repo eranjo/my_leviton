@@ -123,7 +123,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         arg = call.data.get("arg")
         level_in_arg = bool(call.data.get("level_in_arg", False))
         settle = float(call.data.get("settle", 0.5))
-        wait = float(call.data.get("wait", 12.0))
+        wait = float(call.data.get("wait", 20.0))
 
         def _run() -> list[str]:
             from .utils.sniff import probe_level

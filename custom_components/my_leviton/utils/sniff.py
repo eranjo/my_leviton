@@ -329,6 +329,12 @@ def _resolve_arg_level(
     return ARG_ON, level
 
 
+def _addr_key(frame: Sequence[int]) -> Optional[str]:
+    if len(frame) < 5:
+        return None
+    return f"0x{frame[1]:02x}/0x{frame[2]:02x}/0x{frame[3]:02x}{frame[4]:02x}"
+
+
 def _read_light_level(
     dev: usb.core.Device,
     light: Dict,
@@ -337,10 +343,11 @@ def _read_light_level(
     wait_sec: float,
     poll_interval_sec: float,
 ) -> Tuple[Optional[int], List[str]]:
-    """After a SET, poll until ``light`` status appears or ``wait_sec`` elapses.
+    """After a SET, drain status until ``light`` appears or ``wait_sec`` elapses.
 
-    The stick round-robins ~60 devices, so a fixed 2–3 poll window almost
-    always misses the target. Keep polling until we see a matching frame.
+    A full-network POLL streams many HID reports. Re-polling every few hundred
+    ms restarts that stream and can starve later devices (e.g. 0x1052). Match
+    ``dump_bus`` pacing: poll slowly, read continuously.
     """
     notes: List[str] = []
     if settle_sec > 0:
@@ -349,14 +356,17 @@ def _read_light_level(
     last_level: Optional[int] = None
     frames_seen = 0
     matched_frames = 0
+    seen: Dict[str, int] = {}
+    # Poll immediately once, then leave a long gap so the stick can finish.
     next_poll = 0.0
+    poll_gap = max(1.5, float(poll_interval_sec))
     deadline = time.monotonic() + max(0.5, wait_sec)
 
     while time.monotonic() < deadline:
         now = time.monotonic()
         if now >= next_poll:
             _poll(dev)
-            next_poll = now + max(0.15, poll_interval_sec)
+            next_poll = now + poll_gap
 
         raw = _read_raw(dev, timeout_ms=250)
         if raw is None:
@@ -364,6 +374,9 @@ def _read_light_level(
 
         for frame in _extract_frames(raw):
             frames_seen += 1
+            key = _addr_key(frame)
+            if key:
+                seen[key] = seen.get(key, 0) + 1
             if not _match_light(frame, light):
                 continue
             matched_frames += 1
@@ -381,9 +394,11 @@ def _read_light_level(
                     )
                     return last_level, notes
 
+    top = sorted(seen.items(), key=lambda kv: (-kv[1], kv[0]))[:12]
+    seen_s = ",".join(f"{k}*{c}" for k, c in top) if top else "(none)"
     notes.append(
         f"wait_timeout frames={frames_seen} matched={matched_frames} "
-        f"last_level={last_level}"
+        f"last_level={last_level} seen={seen_s}"
     )
     return last_level, notes
 
@@ -398,7 +413,7 @@ def probe_level(
     fade: Optional[int] = None,
     level_in_arg: bool = False,
     settle_sec: float = 0.5,
-    wait_sec: float = 12.0,
+    wait_sec: float = 20.0,
     on_event: Optional[Callable[[str], None]] = None,
 ) -> List[str]:
     """Send SET packets and log the status level the device reports back.
@@ -411,8 +426,9 @@ def probe_level(
       - ``level_in_arg=True``: put percent in the arg byte (legacy broken layout)
       - ``arg`` / ``fade``: override those bytes explicitly
 
-    ``wait_sec`` is how long to poll for *this* light's status after each SET
-    (needed because the bus round-robins many devices).
+    ``wait_sec`` is how long to drain status for *this* light after each SET.
+    Polls are intentionally slow (~2s) so the stick can finish streaming the
+    full device list (fast re-poll was starving later addresses).
     """
     light = lookup_light(light_name)
     if not light:
@@ -449,7 +465,7 @@ def probe_level(
             f"levels={levels[0]}..{levels[-1]} n={len(levels)} "
             f"fade=0x{fade_byte:02x} level_in_arg={level_in_arg} "
             f"arg_override={None if arg is None else f'0x{arg:02x}'} "
-            f"settle={settle_sec}s wait={wait_sec}s"
+            f"settle={settle_sec}s wait={wait_sec}s poll_gap=2.0s"
         )
         emit(
             "PROBE_CSV sent_level,arg,fade,level_byte,reported,match,tx_hex"
@@ -488,9 +504,9 @@ def probe_level(
                 light,
                 settle_sec=settle_sec,
                 wait_sec=wait_sec,
-                poll_interval_sec=0.25,
+                poll_interval_sec=2.0,
             )
-            for note in notes[-5:]:
+            for note in notes[-6:]:
                 emit(f"PROBE_RX sent={sent} {note}")
 
             match = (
