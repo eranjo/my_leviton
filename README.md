@@ -7,6 +7,9 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
+## Beta (1.1.0b1)
+Checksum-built packets + dimmer brightness. Install the `v1.1.0b1` release/tag in HACS (or this branch), restart HA, then try a dimmer slider at ~50%.
+
 ## Still to do
 - Implement automatic discovery of devices on the bus network
 - Confirm dimmer absolute-level encoding on hardware (0–100 in the command arg)
