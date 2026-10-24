@@ -120,3 +120,11 @@ probe_level:
           max: 60
           step: 1
           unit_of_measurement: seconds
+    reset_before:
+      name: Reset before each level
+      description: >
+        Send OFF and wait for 0% before each non-zero SET so prior state
+        cannot contaminate the sample (recommended for encoding A/B).
+      default: true
+      selector:
+        boolean:
