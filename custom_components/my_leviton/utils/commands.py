@@ -66,9 +66,8 @@ def send_light_command(light_name: str, command_key: str) -> bool:
 def send_light_level(light_name: str, level: int) -> bool:
     """Send absolute dimmer level 0-100 for a named light.
 
-    Uses fade=0 so HA slider steps take effect immediately. Captured on/off
-    packets use fade=0x03; reusing that for levels made mid-range moves feel
-    dead (slow overlapping ramps).
+    Uses the same fade=0x03 as captured on/off packets. fade=0x00 (1.1.0b4)
+    caused dimmers to ignore absolute level commands.
     """
     light = lookup_light(light_name)
     if not light:
