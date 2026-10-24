@@ -15,14 +15,15 @@ Any change that bumps `custom_components/my_leviton/manifest.json` `"version"` (
 
 Do all of the following before telling the user to update/install:
 
-1. Land the versioned commits on the beta delivery branch (`cursor/fix-duplicate-entities-0bc6` unless the project’s delivery branch changed).
-2. Create an annotated git tag matching the manifest: `v` + version (example: manifest `1.1.0b10` → tag `v1.1.0b10`).
-3. `git push origin <tag>`.
-4. Publish a GitHub **pre-release** on that tag (`gh release create v… --prerelease …`) with a short title/notes and the HA retest action if relevant.
-5. Confirm the release URL exists; only then tell the user the version is available in HACS.
+1. Land the versioned commits on the beta delivery branch if used, then **merge that work into `main`** (default branch). Tags that only exist on a non-default branch are easy for HACS/humans to miss.
+2. On `main`, create an annotated git tag matching the manifest: `v` + version (example: manifest `1.1.0b10` → tag `v1.1.0b10`).
+3. `git push origin main` and `git push origin <tag>`.
+4. Publish a GitHub **pre-release** on that tag targeting `main` (`gh release create v… --target main --prerelease …`) with short notes and the HA retest action if relevant.
+5. Confirm `gh release view v…` and the release URL; only then tell the user it is available in HACS (remind them to enable **Show beta versions** / reload HACS if needed).
 
 ## Do not
 
-- Stop after opening/updating a PR without a release tag.
+- Stop after opening/updating a PR without a release tag on `main`.
+- Tag only a feature/beta branch and leave `main` stale.
 - Bump the manifest and leave install instructions that depend on the PR branch alone.
 - Ask the user to remind you to tag/release.
