@@ -8,15 +8,47 @@
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
 ## Beta (1.1.0b8)
-**Reverse-engineering services** (Developer Tools → Services):
+**Reverse-engineering actions** — Developer Tools → Actions → paste YAML → Run:
 
-| Service | What it does | Output |
-|---|---|---|
-| `my_leviton.listen_dimmer` | Capture while you use the wall paddle | `/config/my_leviton_capture.log` |
-| `my_leviton.dump_bus` | Poll and log **every** framed packet | `/config/my_leviton_bus_dump.log` |
-| `my_leviton.probe_level` | Send SET → poll status (single level or sweep) | `/config/my_leviton_probe.log` |
+### Single level probe (start here)
+```yaml
+action: my_leviton.probe_level
+data:
+  light: Työhuone katto
+  level: 50
+```
 
-`probe_level` supports encoding A/B via `fade`, `arg`, and `level_in_arg`. Prefer evidence from these logs before changing SET encoding again.
+### Level sweep (sent vs reported table)
+```yaml
+action: my_leviton.probe_level
+data:
+  light: Työhuone katto
+  sweep: true
+  step: 5
+```
+
+### Dump whole bus
+```yaml
+action: my_leviton.dump_bus
+data:
+  duration: 30
+```
+
+### Listen while using the wall paddle
+```yaml
+action: my_leviton.listen_dimmer
+data:
+  light: Työhuone katto
+  duration: 90
+```
+
+| Action | Output file |
+|---|---|
+| `my_leviton.probe_level` | `/config/my_leviton_probe.log` (`PROBE_CSV` / `PROBE_RESULT`) |
+| `my_leviton.dump_bus` | `/config/my_leviton_bus_dump.log` |
+| `my_leviton.listen_dimmer` | `/config/my_leviton_capture.log` |
+
+Optional A/B on `probe_level`: `fade`, `arg`, `level_in_arg: true`. Paste the log back before any encoding change.
 
 Each dimmer still has a **dim start** number entity (0–100%) for hardware low-end trim.
 
