@@ -9,13 +9,13 @@ This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
 ## Still to do
 - Implement automatic discovery of devices on the bus network
-- Enable automatic identification of device types
-- Reverse-engineer and implement checksum validation
+- Confirm dimmer absolute-level encoding on hardware (0–100 in the command arg)
 - Additional tasks to be determined...
 
 ## Features
 - Local USB communication (requires `pyusb`)
-- Implements `light` platform
+- Implements `light` platform (on/off relays + brightness dimmers)
+- CRC-8/MAXIM checksum when building USB packets
 - No cloud dependency
 
 ## Installation
@@ -49,7 +49,10 @@ custom_components/
       commands.py
       constants.py
       locks.py
+      protocol.py
       usb_utils.py
+tests/
+  test_protocol.py
 hacs.json
 README.md
 LICENSE
