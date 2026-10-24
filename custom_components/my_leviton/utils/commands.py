@@ -1,36 +1,102 @@
 import logging
-from typing import Optional, List, Dict
+from typing import Optional, Dict
+
 from .usb_utils import send_bytes_once
 from .constants import VID, PID, LIGHTS
 from .locks import initialize_usb_lock
+from .protocol import (
+    ARG_OFF,
+    ARG_ON,
+    FADE_LEVEL,
+    FADE_ON_OFF,
+    build_set_command,
+    build_set_level_command,
+    brightness_to_level,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _USB_LOCK = initialize_usb_lock()
 
+
 def lookup_light(name: str) -> Optional[Dict]:
-    for l in LIGHTS:
-        if l.get("name") == name:
-            return l
+    for light in LIGHTS:
+        if light.get("name") == name:
+            return light
     return None
 
+
+def _send_arg(light: Dict, arg: int, *, fade: int = FADE_ON_OFF) -> bool:
+    data = build_set_command(
+        light["type"],
+        light["channel"],
+        light["device_id"],
+        arg,
+        fade=fade,
+    )
+    with _USB_LOCK:
+        ok = send_bytes_once(VID, PID, data)
+        if not ok:
+            _LOGGER.error(
+                "Failed to send arg=0x%02x fade=0x%02x to light '%s'",
+                arg,
+                fade,
+                light.get("name"),
+            )
+        return ok
+
+
 def send_light_command(light_name: str, command_key: str) -> bool:
-    """Send 'on' or 'off' command for a named light.
-    Uses a global lock so multiple HA calls queue up instead of colliding.
-    """
+    """Send 'on' or 'off' for a named light."""
     light = lookup_light(light_name)
     if not light:
         _LOGGER.error("Unknown light: %s", light_name)
         return False
 
-    cmd_list: List[int] = light.get(command_key)
-    if not cmd_list:
-        _LOGGER.error("Light '%s' does not define command '%s'", light_name, command_key)
+    if command_key == "on":
+        arg = ARG_ON
+    elif command_key == "off":
+        arg = ARG_OFF
+    else:
+        _LOGGER.error("Light '%s' unsupported command '%s'", light_name, command_key)
         return False
 
-    data = bytes(cmd_list)
+    return _send_arg(light, arg, fade=FADE_ON_OFF)
 
+
+def send_light_level(light_name: str, level: int) -> bool:
+    """Send absolute dimmer level 0-100 for a named light.
+
+    Packet is ``05 00 fade LEVEL 00 00`` (ON + level data byte), matching the
+    captured on/off layout where the percent is NOT the arg byte.
+    """
+    light = lookup_light(light_name)
+    if not light:
+        _LOGGER.error("Unknown light: %s", light_name)
+        return False
+    if not light.get("dimmer"):
+        _LOGGER.error("Light '%s' is not a dimmer", light_name)
+        return False
+
+    data = build_set_level_command(
+        light["type"],
+        light["channel"],
+        light["device_id"],
+        level,
+        fade=FADE_LEVEL,
+    )
     with _USB_LOCK:
         ok = send_bytes_once(VID, PID, data)
         if not ok:
-            _LOGGER.error("Failed to send command '%s' to light '%s'", command_key, light_name)
+            _LOGGER.error(
+                "Failed to send level=%s to light '%s'", level, light.get("name")
+            )
         return ok
+
+
+def send_light_brightness(
+    light_name: str, brightness: int, *, dim_start: int = 0
+) -> bool:
+    """Send Home Assistant brightness 0-255 for a dimmer."""
+    return send_light_level(
+        light_name, brightness_to_level(brightness, dim_start=dim_start)
+    )
