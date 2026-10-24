@@ -7,16 +7,66 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
+## Beta (1.1.0b10)
+**Reverse-engineering actions** — Developer Tools → Actions → paste YAML → Run:
+
+### Single level probe (start here)
+```yaml
+action: my_leviton.probe_level
+data:
+  light: Työhuone katto
+  level: 50
+  wait: 20
+```
+
+### Level sweep (sent vs reported table)
+```yaml
+action: my_leviton.probe_level
+data:
+  light: Työhuone katto
+  sweep: true
+  step: 10
+  wait: 20
+```
+
+`wait` is how long each SET drains status for *that* light. Polls are slow (~2s) so the stick can finish streaming the full device list.
+
+### Dump whole bus
+```yaml
+action: my_leviton.dump_bus
+data:
+  duration: 30
+```
+
+### Listen while using the wall paddle
+```yaml
+action: my_leviton.listen_dimmer
+data:
+  light: Työhuone katto
+  duration: 90
+```
+
+| Action | Output file |
+|---|---|
+| `my_leviton.probe_level` | `/config/my_leviton_probe.log` (`PROBE_CSV` / `PROBE_RESULT`) |
+| `my_leviton.dump_bus` | `/config/my_leviton_bus_dump.log` |
+| `my_leviton.listen_dimmer` | `/config/my_leviton_capture.log` |
+
+Optional A/B on `probe_level`: `fade`, `arg`, `level_in_arg: true`. Paste the log back before any encoding change.
+
+Each dimmer still has a **dim start** number entity (0–100%) for hardware low-end trim.
+
 ## Still to do
 - Implement automatic discovery of devices on the bus network
-- Enable automatic identification of device types
-- Reverse-engineer and implement checksum validation
-- Additional tasks to be determined...
+- Optional auto-probe for dim start
+- Fix absolute level encoding once probe tables confirm the wire layout
 
 ## Features
 - Local USB communication (requires `pyusb`)
-- Implements `light` platform
+- Implements `light` platform (on/off relays + brightness dimmers)
+- CRC-8/MAXIM checksum when building USB packets
 - No cloud dependency
+- USB capture / dump / probe services for protocol reverse-engineering
 
 ## Installation
 
@@ -49,7 +99,10 @@ custom_components/
       commands.py
       constants.py
       locks.py
+      protocol.py
       usb_utils.py
+tests/
+  test_protocol.py
 hacs.json
 README.md
 LICENSE

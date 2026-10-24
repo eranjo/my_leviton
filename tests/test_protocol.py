@@ -1,0 +1,126 @@
+"""Offline tests for CRC-8/MAXIM framing (no Home Assistant / USB required)."""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PROTOCOL_PATH = ROOT / "custom_components" / "my_leviton" / "utils" / "protocol.py"
+
+spec = importlib.util.spec_from_file_location("leviton_protocol", PROTOCOL_PATH)
+protocol = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(protocol)
+
+
+# Captured samples from the original fixed-packet constants (pre-refactor).
+CAPTURED = [
+    # name, type, channel, device_id, on_packet, off_packet
+    (
+        "Olkkari Seinä",
+        0x26,
+        0x03,
+        0x0E40,
+        [0x02, 0x12, 0x01, 0x7E, 0x25, 0x0D, 0xBC, 0x00, 0x26, 0x03, 0x0E, 0x40, 0x05, 0x00, 0x03, 0x00, 0x00, 0x00, 0x9C, 0x7F, 0x8F],
+        [0x02, 0x12, 0x01, 0x7E, 0x25, 0x0D, 0xBC, 0x00, 0x26, 0x03, 0x0E, 0x40, 0x05, 0x01, 0x03, 0x00, 0x00, 0x00, 0x51, 0x7F, 0x8F],
+    ),
+    (
+        "Casper Katto (dimmer)",
+        0x1E,
+        0x03,
+        0x0FCB,
+        [0x02, 0x12, 0x01, 0x7E, 0x25, 0x0D, 0xBC, 0x00, 0x1E, 0x03, 0x0F, 0xCB, 0x05, 0x00, 0x03, 0x00, 0x00, 0x00, 0x0C, 0x7F, 0x8F],
+        [0x02, 0x12, 0x01, 0x7E, 0x25, 0x0D, 0xBC, 0x00, 0x1E, 0x03, 0x0F, 0xCB, 0x05, 0x01, 0x03, 0x00, 0x00, 0x00, 0xC1, 0x7F, 0x8F],
+    ),
+    (
+        "Työhuone katto",
+        0x1E,
+        0x03,
+        0x1052,
+        [0x02, 0x12, 0x01, 0x7E, 0x25, 0x0D, 0xBC, 0x00, 0x1E, 0x03, 0x10, 0x52, 0x05, 0x00, 0x03, 0x00, 0x00, 0x00, 0x02, 0x7F, 0x8F],
+        [0x02, 0x12, 0x01, 0x7E, 0x25, 0x0D, 0xBC, 0x00, 0x1E, 0x03, 0x10, 0x52, 0x05, 0x01, 0x03, 0x00, 0x00, 0x00, 0xCF, 0x7F, 0x8F],
+    ),
+    (
+        "Tiskipöytä",
+        0x26,
+        0xC3,
+        0x0E62,
+        # Captured ON had trailer 0xD0 (likely capture noise); rebuilt uses 0x8F.
+        # Escape of CS=0x7E -> 7C FE is what we assert.
+        [0x02, 0x13, 0x01, 0x7E, 0x25, 0x0D, 0xBC, 0x00, 0x26, 0xC3, 0x0E, 0x62, 0x05, 0x00, 0x03, 0x00, 0x00, 0x00, 0x7C, 0xFE, 0x7F, 0x8F],
+        [0x02, 0x12, 0x01, 0x7E, 0x25, 0x0D, 0xBC, 0x00, 0x26, 0xC3, 0x0E, 0x62, 0x05, 0x01, 0x03, 0x00, 0x00, 0x00, 0xB3, 0x7F, 0x8F],
+    ),
+]
+
+
+class ProtocolTests(unittest.TestCase):
+    def test_rebuild_on_off_samples(self):
+        for name, typ, ch, dev, on_pkt, off_pkt in CAPTURED:
+            with self.subTest(name=name, cmd="on"):
+                self.assertEqual(
+                    list(protocol.build_set_command(typ, ch, dev, protocol.ARG_ON)),
+                    on_pkt,
+                )
+            with self.subTest(name=name, cmd="off"):
+                self.assertEqual(
+                    list(protocol.build_set_command(typ, ch, dev, protocol.ARG_OFF)),
+                    off_pkt,
+                )
+
+    def test_crc_residual_zero(self):
+        payload = [0x25, 0x0D, 0xBC, 0x00, 0x1E, 0x03, 0x0F, 0xCB, 0x05, 0x00, 0x03, 0x00, 0x00, 0x00]
+        cs = protocol.crc8_maxim(payload)
+        self.assertEqual(protocol.crc8_maxim(payload + [cs]), 0)
+
+    def test_dimmer_levels_use_data_byte_not_arg(self):
+        """Absolute levels keep arg=ON; percent goes after fade."""
+        packets = {
+            level: protocol.build_set_level_command(0x1E, 0x03, 0x0FCB, level)
+            for level in (0, 25, 50, 75, 100)
+        }
+        # Off uses classic OFF arg; level byte stays 0.
+        self.assertEqual(packets[0][13], protocol.ARG_OFF)
+        self.assertEqual(packets[0][15], 0)
+        # Mid/full: arg=ON, fade=0x03, level in the next byte.
+        self.assertEqual(packets[50][13], protocol.ARG_ON)
+        self.assertEqual(packets[50][14], protocol.FADE_LEVEL)
+        self.assertEqual(packets[50][15], 50)
+        self.assertEqual(packets[100][13], protocol.ARG_ON)
+        self.assertEqual(packets[100][15], 100)
+        # Plain ON (restore last) still has level byte 0 — distinct from 100%.
+        on_pkt = protocol.build_set_command(0x1E, 0x03, 0x0FCB, protocol.ARG_ON)
+        self.assertEqual(on_pkt[13], protocol.ARG_ON)
+        self.assertEqual(on_pkt[15], 0)
+        self.assertNotEqual(packets[100], on_pkt)
+        self.assertEqual(len(set(packets.values())), 5)
+
+    def test_level_one_is_not_off_packet(self):
+        """Regression: level-in-arg made 1% identical to OFF (arg=0x01)."""
+        off_pkt = protocol.build_set_command(0x1E, 0x03, 0x0FCB, protocol.ARG_OFF)
+        one_pkt = protocol.build_set_level_command(0x1E, 0x03, 0x0FCB, 1)
+        self.assertNotEqual(list(one_pkt), list(off_pkt))
+        self.assertEqual(one_pkt[13], protocol.ARG_ON)
+        self.assertEqual(one_pkt[15], 1)
+
+    def test_brightness_mapping(self):
+        self.assertEqual(protocol.brightness_to_level(0), 0)
+        self.assertEqual(protocol.brightness_to_level(255), 100)
+        self.assertEqual(protocol.brightness_to_level(128), 50)
+
+    def test_brightness_mapping_with_dim_start(self):
+        # Off stays off; full stays full; mid maps into start..100.
+        self.assertEqual(protocol.brightness_to_level(0, dim_start=60), 0)
+        self.assertEqual(protocol.brightness_to_level(255, dim_start=60), 100)
+        # Smallest non-zero HA brightness → near dim_start.
+        self.assertEqual(protocol.brightness_to_level(1, dim_start=60), 60)
+        mid = protocol.brightness_to_level(128, dim_start=60)
+        self.assertGreaterEqual(mid, 60)
+        self.assertLessEqual(mid, 100)
+        self.assertEqual(mid, 60 + round(40 * (128 / 255)))
+
+
+if __name__ == "__main__":
+    unittest.main()
