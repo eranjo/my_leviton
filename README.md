@@ -7,10 +7,10 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
-## Beta (1.1.0b6)
-Each dimmer gets a **dim start** number entity (0–100%). Set it to the first hardware level where the lamp lights (Leviton low-end trim). The light brightness slider then maps onto that range → 100%.
+## Beta (1.1.0b7)
+**Fix:** absolute dimmer levels were stuffed into the on/off arg byte (so level `1` = OFF, and other values glitched — e.g. ~92% off). Levels now use `05 00 fade LEVEL` like captured on packets.
 
-Example: `number.tyohuone_katto_dim_start` = `60` → HA 1% sends device level 60, HA 100% sends 100.
+Each dimmer still has a **dim start** number entity (0–100%) for hardware low-end trim. Try dim start `0` first after upgrading; then calibrate.
 
 ## Still to do
 - Implement automatic discovery of devices on the bus network

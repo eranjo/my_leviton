@@ -10,8 +10,8 @@ from .protocol import (
     FADE_LEVEL,
     FADE_ON_OFF,
     build_set_command,
+    build_set_level_command,
     brightness_to_level,
-    level_to_arg,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,8 +66,8 @@ def send_light_command(light_name: str, command_key: str) -> bool:
 def send_light_level(light_name: str, level: int) -> bool:
     """Send absolute dimmer level 0-100 for a named light.
 
-    Uses the same fade=0x03 as captured on/off packets. fade=0x00 (1.1.0b4)
-    caused dimmers to ignore absolute level commands.
+    Packet is ``05 00 fade LEVEL 00 00`` (ON + level data byte), matching the
+    captured on/off layout where the percent is NOT the arg byte.
     """
     light = lookup_light(light_name)
     if not light:
@@ -77,7 +77,20 @@ def send_light_level(light_name: str, level: int) -> bool:
         _LOGGER.error("Light '%s' is not a dimmer", light_name)
         return False
 
-    return _send_arg(light, level_to_arg(level), fade=FADE_LEVEL)
+    data = build_set_level_command(
+        light["type"],
+        light["channel"],
+        light["device_id"],
+        level,
+        fade=FADE_LEVEL,
+    )
+    with _USB_LOCK:
+        ok = send_bytes_once(VID, PID, data)
+        if not ok:
+            _LOGGER.error(
+                "Failed to send level=%s to light '%s'", level, light.get("name")
+            )
+        return ok
 
 
 def send_light_brightness(

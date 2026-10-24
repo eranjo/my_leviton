@@ -75,29 +75,35 @@ class ProtocolTests(unittest.TestCase):
         cs = protocol.crc8_maxim(payload)
         self.assertEqual(protocol.crc8_maxim(payload + [cs]), 0)
 
-    def test_dimmer_levels_change_checksum(self):
-        """Intermediate dimmer levels must produce distinct valid frames."""
+    def test_dimmer_levels_use_data_byte_not_arg(self):
+        """Absolute levels keep arg=ON; percent goes after fade."""
         packets = {
-            level: protocol.build_set_command(
-                0x1E,
-                0x03,
-                0x0FCB,
-                protocol.level_to_arg(level),
-                fade=protocol.FADE_LEVEL,
-            )
+            level: protocol.build_set_level_command(0x1E, 0x03, 0x0FCB, level)
             for level in (0, 25, 50, 75, 100)
         }
+        # Off uses classic OFF arg; level byte stays 0.
         self.assertEqual(packets[0][13], protocol.ARG_OFF)
-        self.assertEqual(packets[50][13], 50)
-        self.assertEqual(packets[100][13], 100)
-        # Absolute levels must use the same non-zero fade as on/off (0x03).
+        self.assertEqual(packets[0][15], 0)
+        # Mid/full: arg=ON, fade=0x03, level in the next byte.
+        self.assertEqual(packets[50][13], protocol.ARG_ON)
         self.assertEqual(packets[50][14], protocol.FADE_LEVEL)
-        self.assertEqual(protocol.FADE_LEVEL, protocol.FADE_ON_OFF)
+        self.assertEqual(packets[50][15], 50)
+        self.assertEqual(packets[100][13], protocol.ARG_ON)
+        self.assertEqual(packets[100][15], 100)
+        # Plain ON (restore last) still has level byte 0 — distinct from 100%.
         on_pkt = protocol.build_set_command(0x1E, 0x03, 0x0FCB, protocol.ARG_ON)
-        self.assertEqual(on_pkt[14], protocol.FADE_ON_OFF)
-        # All checksums (byte before 7F, accounting for stuffing) should differ
-        # for distinct levels — compare full packets.
+        self.assertEqual(on_pkt[13], protocol.ARG_ON)
+        self.assertEqual(on_pkt[15], 0)
+        self.assertNotEqual(packets[100], on_pkt)
         self.assertEqual(len(set(packets.values())), 5)
+
+    def test_level_one_is_not_off_packet(self):
+        """Regression: level-in-arg made 1% identical to OFF (arg=0x01)."""
+        off_pkt = protocol.build_set_command(0x1E, 0x03, 0x0FCB, protocol.ARG_OFF)
+        one_pkt = protocol.build_set_level_command(0x1E, 0x03, 0x0FCB, 1)
+        self.assertNotEqual(list(one_pkt), list(off_pkt))
+        self.assertEqual(one_pkt[13], protocol.ARG_ON)
+        self.assertEqual(one_pkt[15], 1)
 
     def test_brightness_mapping(self):
         self.assertEqual(protocol.brightness_to_level(0), 0)
