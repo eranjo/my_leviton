@@ -110,10 +110,10 @@ probe_level:
     wait:
       name: Wait (seconds)
       description: >
-        How long to keep polling for this light's status after each SET.
-        The stick round-robins many devices — short waits often miss it
-        (default 12s).
-      default: 12
+        How long to drain status for this light after each SET. Polls are
+        spaced ~2s apart so the stick can finish the full device stream
+        (default 20s).
+      default: 20
       selector:
         number:
           min: 1
