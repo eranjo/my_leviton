@@ -7,40 +7,34 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
-## Beta (1.1.0b12)
-**Reverse-engineering actions** — Developer Tools → Actions → paste YAML → Run:
+## Stable 1.1.0
 
-### Single level probe (preferred for encoding A/B)
+First stable of the 1.1 line (after `1.1.0b*`). Includes:
+
+- Correct dimmer level encoding and relay ON behavior
+- Fast HA-app toggles (optimistic SET + background readback)
+- Wall-button / bus state sync via continuous short USB listen bursts
+- Shared post-SET status readback so HA matches reported levels
+- Per-dimmer **dim start** number entity (0–100%) for hardware low-end trim
+
+### Reverse-engineering actions (optional)
+
+Developer Tools → Actions → paste YAML → Run:
+
 ```yaml
 action: my_leviton.probe_level
 data:
   light: Office Ceiling
   level: 50
-  level_in_arg: true
   wait: 20
 ```
 
-### Level sweep
-```yaml
-action: my_leviton.probe_level
-data:
-  light: Office Ceiling
-  sweep: true
-  step: 10
-  level_in_arg: true
-  wait: 20
-```
-
-Evidence so far: `05 00 fade LEVEL` forces **100%**; `arg=0x0a` looks like ON-to-last-level. Prefer **single-level** / scripted probes. `my_leviton_probe.log` **appends** so multi-step scripts keep every run.
-
-### Dump whole bus
 ```yaml
 action: my_leviton.dump_bus
 data:
   duration: 30
 ```
 
-### Listen while using the wall paddle
 ```yaml
 action: my_leviton.listen_dimmer
 data:
@@ -50,26 +44,20 @@ data:
 
 | Action | Output file |
 |---|---|
-| `my_leviton.probe_level` | `/config/my_leviton_probe.log` (`PROBE_CSV` / `PROBE_RESULT`) |
+| `my_leviton.probe_level` | `/config/my_leviton_probe.log` |
 | `my_leviton.dump_bus` | `/config/my_leviton_bus_dump.log` |
 | `my_leviton.listen_dimmer` | `/config/my_leviton_capture.log` |
 
-Optional A/B on `probe_level`: `fade`, `arg`, `level_in_arg: true`. Paste the log back before any encoding change.
-
-Each dimmer still has a **dim start** number entity (0–100%) for hardware low-end trim.
-
 ## Still to do
-- Implement automatic discovery of devices on the bus network
+- Automatic discovery of devices on the bus network
 - Optional auto-probe for dim start
-- Fix absolute level encoding once probe tables confirm the wire layout
 
 ## Features
 - Local USB communication (requires `pyusb`)
 - Implements `light` platform (on/off relays + brightness dimmers)
 - CRC-8/MAXIM checksum when building USB packets
 - No cloud dependency
-- USB capture / dump / probe services for protocol reverse-engineering
-
+- Fast toggles, wall-listener state sync, and USB capture / dump / probe services
 ## Installation
 
 [![Open HACS repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=eranjo&repository=my_leviton)

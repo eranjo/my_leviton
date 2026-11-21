@@ -177,7 +177,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.services.async_remove(DOMAIN, service)
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data.get(DOMAIN, {}).pop("lights_added", None)
+        domain_data = hass.data.get(DOMAIN, {})
+        domain_data.pop("lights_added", None)
+        # Listener task is cancelled in light.async_unload_entry; clear leftovers.
+        domain_data.pop("bus_listen_task", None)
+        domain_data.pop("light_entities", None)
     return unload_ok
 
 

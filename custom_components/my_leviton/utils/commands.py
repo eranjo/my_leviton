@@ -7,6 +7,7 @@ from .constants import VID, PID, LIGHTS
 from .locks import initialize_usb_lock
 from .protocol import (
     ARG_OFF,
+    ARG_ON,
     ARG_ON_LAST,
     FADE_LEVEL,
     FADE_ON_OFF,
@@ -15,6 +16,7 @@ from .protocol import (
     brightness_to_level,
     needs_off_before_level,
 )
+from .status import mark_command_activity
 
 _LOGGER = logging.getLogger(__name__)
 _USB_LOCK = initialize_usb_lock()
@@ -39,6 +41,7 @@ def _send_arg(light: Dict, arg: int, *, fade: int = FADE_ON_OFF) -> bool:
         arg,
         fade=fade,
     )
+    mark_command_activity()
     with _USB_LOCK:
         ok = send_bytes_once(VID, PID, data)
         if not ok:
@@ -59,8 +62,14 @@ def send_light_command(light_name: str, command_key: str) -> bool:
         return False
 
     if command_key == "on":
-        # Wall-button tap ON restores last level (arg 0x0A), not full 100%.
-        arg = ARG_ON_LAST
+        # Dimmers: 0x0A restores last level (wall-button tap ON).
+        # Relays (0x26): 0x0A is ignored — must use ARG_ON (0x00). b16
+        # used ON_LAST for every light; post-SET readback then saw level=0
+        # and rolled the optimistic HA state back to OFF (Entry Switch repro).
+        if light.get("dimmer"):
+            arg = ARG_ON_LAST
+        else:
+            arg = ARG_ON
     elif command_key == "off":
         arg = ARG_OFF
     else:
@@ -99,6 +108,7 @@ def send_light_level(
             fade=FADE_LEVEL,
             level=0,
         )
+        mark_command_activity()
         with _USB_LOCK:
             ok = send_bytes_once(VID, PID, off_pkt)
         if not ok:
@@ -118,6 +128,7 @@ def send_light_level(
         target,
         fade=FADE_LEVEL,
     )
+    mark_command_activity()
     with _USB_LOCK:
         ok = send_bytes_once(VID, PID, data)
         if not ok:
