@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 
 from .const import DOMAIN, OPTIONS_DIM_START, PLATFORMS, UNIQUE_ID
 from .entity_cleanup import (
+    async_cleanup_dim_start_numbers,
     async_cleanup_duplicate_lights,
     async_remove_extra_config_entries,
 )
@@ -19,17 +20,6 @@ DEFAULT_LISTEN_LIGHT = "Office Ceiling"
 SERVICE_LISTEN_DIMMER = "listen_dimmer"
 SERVICE_DUMP_BUS = "dump_bus"
 SERVICE_PROBE_LEVEL = "probe_level"
-
-
-def dim_start_for(hass: HomeAssistant, light_name: str) -> int:
-    """Return configured hardware dim-start (0-100) for a light, or 0."""
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        raw = entry.options.get(OPTIONS_DIM_START, {}).get(light_name, 0)
-        try:
-            return max(0, min(100, int(raw)))
-        except (TypeError, ValueError):
-            return 0
-    return 0
 
 
 def _write_capture(
@@ -96,6 +86,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     removed = async_cleanup_duplicate_lights(hass)
     if removed:
         _LOGGER.info("Removed %s duplicate Leviton light entit(y/ies)", removed)
+
+    # 1.1.0b14: dim_start number entities / options are gone (coarse arg steps).
+    n_dim = async_cleanup_dim_start_numbers(hass)
+    if n_dim:
+        _LOGGER.info("Removed %s legacy dim_start number entit(y/ies)", n_dim)
+    if OPTIONS_DIM_START in entry.options:
+        new_options = {
+            key: value
+            for key, value in entry.options.items()
+            if key != OPTIONS_DIM_START
+        }
+        hass.config_entries.async_update_entry(entry, options=new_options)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -188,9 +190,15 @@ def turn_light_off(light_name: str) -> bool:
 
 
 def turn_light_brightness(
-    light_name: str, brightness: int, dim_start: int = 0
+    light_name: str,
+    brightness: int,
+    previous_brightness: int | None = None,
 ) -> bool:
     """Set dimmer brightness (Home Assistant 0-255 scale)."""
     from .utils.commands import send_light_brightness
 
-    return send_light_brightness(light_name, brightness, dim_start=dim_start)
+    return send_light_brightness(
+        light_name,
+        brightness,
+        previous_brightness=previous_brightness,
+    )

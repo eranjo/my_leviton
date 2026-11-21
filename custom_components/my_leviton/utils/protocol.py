@@ -10,9 +10,14 @@ TYPE_DIMMER = 0x1E
 TYPE_DIMMER_ALT = 0x2E
 DIMMER_TYPES = frozenset({TYPE_DIMMER, TYPE_DIMMER_ALT})
 
-# Known primary switch args (captured from official app traffic).
+# Primary SET arg opcodes (VRUSB, confirmed on live bus):
+#   0x00 = full ON (100%)
+#   0x01 = OFF
+#   0x0A = ON last level (matches wall-button tap ON)
+# Absolute mid-levels use other arg values — see level_to_dim_arg().
 ARG_ON = 0x00
 ARG_OFF = 0x01
+ARG_ON_LAST = 0x0A
 
 # Status reports use 0x00..0x64 for off..100%.
 LEVEL_MIN = 0
@@ -26,9 +31,8 @@ _REPORT_ID = 0x02
 _PREFIX = 0x01
 _PAYLOAD_HEADER = (0x25, 0x0D, 0xBC, 0x00)
 _CMD_SET = 0x05
-# Captured on/off packets use fade=0x03. Absolute levels must use the same
-# non-zero fade — fade=0x00 (tried in 1.1.0b4) made dimmers ignore level
-# commands entirely.
+# Captured on/off packets use fade=0x03. fade=0x00 (1.1.0b4) made dimmers
+# ignore many SET packets.
 _FADE = 0x03
 FADE_ON_OFF = _FADE
 FADE_LEVEL = _FADE
@@ -73,9 +77,10 @@ def build_set_command(
     Layout:
       02 | len | 01 7E | 25 0d bc 00 | type ch id_hi id_lo | 05 arg fade level 00 00 | CS | 7F | 8F
 
-    Captured on/off use arg=0x00/0x01 with level=0. Absolute dimmer levels keep
-    arg=ARG_ON (0x00) and put 1..100 in ``level`` — stuffing the percent into
-    ``arg`` made level 1 identical to OFF and caused random dead/off spots.
+    On VRUSB dimmers the **arg** byte is the opcode / coarse level selector;
+    putting HA percent into the level data byte with arg=ARG_ON (0x00) always
+    drove the load to ~100% (1.1.0b7–b12). Absolute mid-levels use
+    ``level_to_dim_arg`` instead.
 
     CS is CRC-8/MAXIM over the bytes after 0x7E and before CS (unstuffed).
     """
@@ -101,6 +106,58 @@ def build_set_command(
     return bytes([_REPORT_ID, length, *body, _TRAILER])
 
 
+def level_to_dim_arg(level: int) -> int:
+    """Map Leviton percent 0-100 to a VRUSB SET arg byte.
+
+    Live probes (Office Ceiling) showed:
+
+    * ``0x00`` → full 100%
+    * ``0x01`` → off
+    * ``0x0A`` (and several nearby) → restore last level
+    * ``0x0D..0x0F`` (13..15) → about 70 / 80 / 90%
+      i.e. ``reported ≈ (arg - 6) * 10``
+    * ``0x10`` → ~100% from OFF, but **ignored when already on**
+      (70→96 and 80→96 stayed at the prior level). Use ``ARG_ON`` instead.
+    * Mid args (e.g. ``0x07`` for ~6%) are also **ignored after full ON**
+      (96→6 stayed at 100). Callers must OFF-then-SET — see
+      ``needs_off_before_level``.
+
+    Mid-levels encode as ``arg = 6 + round(level / 10)`` (7..15) with an
+    empty level data byte. Levels that would round to step 10 (≥~95%) use
+    ``ARG_ON`` so absolute jumps to near-full take effect while on.
+    """
+    level = max(LEVEL_MIN, min(LEVEL_MAX, int(level)))
+    if level <= 0:
+        return ARG_OFF
+    if level >= LEVEL_MAX:
+        return ARG_ON
+    # Round half up so 25→3 (not banker's 2).
+    step = int(level / 10.0 + 0.5)
+    step = max(1, min(10, step))
+    # step 10 → arg 0x10 is ignored on an already-on dimmer; force full ON.
+    if step >= 10:
+        return ARG_ON
+    return 6 + step
+
+
+def needs_off_before_level(previous_level: int | None, target_level: int) -> bool:
+    """Return True if an absolute SET must be preceded by OFF.
+
+    Basic jump scenarios (live Office):
+
+    * full/near-full (``ARG_ON``) → mid level: mid arg is ignored while on
+      (96→6 stayed at 100 with bare ``arg=0x07``).
+    * mid → full: ``ARG_ON`` works without reset.
+    * anything → 0 / 100: OFF / ON opcodes work without reset.
+    """
+    target = max(LEVEL_MIN, min(LEVEL_MAX, int(target_level)))
+    if previous_level is None:
+        return False
+    if not (LEVEL_MIN < target < 95):
+        return False
+    return level_to_dim_arg(int(previous_level)) == ARG_ON
+
+
 def build_set_level_command(
     device_type: int,
     channel: int,
@@ -109,35 +166,21 @@ def build_set_level_command(
     *,
     fade: int = FADE_LEVEL,
 ) -> bytes:
-    """Absolute dimmer level 0-100 (0 → off packet; 1-100 → ON + level byte)."""
+    """Absolute dimmer level 0-100 via VRUSB arg encoding (level data byte 0)."""
     level = max(LEVEL_MIN, min(LEVEL_MAX, int(level)))
-    if level <= 0:
-        return build_set_command(
-            device_type, channel, device_id, ARG_OFF, fade=fade, level=0
-        )
+    arg = level_to_dim_arg(level)
     return build_set_command(
-        device_type, channel, device_id, ARG_ON, fade=fade, level=level
+        device_type, channel, device_id, arg, fade=fade, level=0
     )
 
 
-def brightness_to_level(brightness: int, dim_start: int = 0) -> int:
-    """Map Home Assistant brightness (0-255) to Leviton level (0-100).
-
-    ``dim_start`` (0-100) is the hardware low-end / first visible level.
-    HA 0% → off, HA >0 maps linearly onto ``dim_start``..100 so the slider
-    uses the dimmer's usable range. ``dim_start=0`` keeps a plain 0..100 map.
-    """
+def brightness_to_level(brightness: int) -> int:
+    """Map Home Assistant brightness (0-255) to Leviton level (0-100)."""
     if brightness <= 0:
         return LEVEL_MIN
-    start = max(0, min(LEVEL_MAX, int(dim_start)))
     if brightness >= 255:
         return LEVEL_MAX
-    if start <= 0:
-        return max(1, min(LEVEL_MAX, round(brightness * LEVEL_MAX / 255)))
-    # Map 1..255 → start..100 (inclusive at both ends).
-    span = LEVEL_MAX - start
-    level = start + round(span * (brightness / 255))
-    return max(start, min(LEVEL_MAX, level))
+    return max(1, min(LEVEL_MAX, round(brightness * LEVEL_MAX / 255)))
 
 
 def is_dimmer_type(device_type: int) -> bool:

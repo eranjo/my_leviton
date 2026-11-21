@@ -1,0 +1,60 @@
+Dimming notes — my_leviton 1.1.0b15
+===================================
+
+Scope
+-----
+Protocol changes apply to ALL dimmers. Live probes this session used only
+Office Ceiling (Master Bedroomn / bedroom lights were not touched).
+
+Basic jump scenarios (required unit coverage)
+---------------------------------------------
+See tests/test_jump_scenarios.py — from→to matrix including:
+  16→96 (low→high), 96→6 (high→low), mid→mid, off/full endpoints.
+Policy: leaving ARG_ON (full/near-full) for a mid level requires OFF then SET.
+
+Wall button (Office Ceiling)
+---------------------------
+- Tap = on/off (ON restores last level)
+- Long-press = ramp; pause then long-press again = reverse direction
+- Wire: status 0x04 and live 0x22 frames only (no USB SET from the button)
+
+VRUSB SET arg opcodes (live)
+----------------------------
+  0x00  full ON (~100%) — also used for HA levels ≥~95% (see b14)
+  0x01  OFF
+  0x0A  ON last level (plain HA turn_on)
+  0x07..0x0F  ~10% steps (reported ≈ (arg - 6) * 10)
+  0x10  ~100% from OFF, but IGNORED when already on (do not use)
+
+Bug fixed in 1.1.0b13
+--------------------
+Percent in level data byte with arg=ARG_ON forced ~100%. Mid-levels use
+level_to_dim_arg() (~10% steps in the arg byte, level data byte 0).
+
+Bug fixed in 1.1.0b14
+--------------------
+16→96 / 80→96 stuck: arg 0x10 ignored while on. Near-full → ARG_ON.
+Removed dim_start number entities.
+
+Bug fixed in 1.1.0b15
+--------------------
+96→6 stayed bright: arg 0x07 ignored after full ON (probe_high_low.log).
+needs_off_before_level() + send_light_level OFF-then-SET when leaving
+ARG_ON for a mid level. light.py passes previous brightness.
+
+Run unit tests
+--------------
+  python3 tests/run_tests.py
+  → test_output.log
+
+Hardware verify (Office Ceiling only)
+------------------------------------
+b14: 80→96 arg=0x00 → reported 100
+b15 probe: 96 (ARG_ON) then bare 6 (arg=0x07) → reported 100 (BUG)
+     fix: OFF then 6 after full — re-probe after reload
+
+Do NOT probe Master Bedroom / bedroom lights while someone is sleeping.
+
+HACS
+----
+manifest is 1.1.0b15 — publish tag v1.1.0b15 on main for HACS beta install.

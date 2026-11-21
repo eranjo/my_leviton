@@ -2,3 +2,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Local test runner output
+test_output.log
+**/test_output.log
+**/__pycache__/

@@ -16,6 +16,8 @@ from .protocol import (
     ARG_ON,
     FADE_LEVEL,
     build_set_command,
+    build_set_level_command,
+    level_to_dim_arg,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -530,17 +532,30 @@ def probe_level(
                         f"reported={baselined}"
                     )
 
-            arg_b, level_b = _resolve_arg_level(
-                sent, arg, level_in_arg=level_in_arg
-            )
-            packet = build_set_command(
-                light["type"],
-                light["channel"],
-                light["device_id"],
-                arg_b,
-                fade=fade_byte,
-                level=level_b,
-            )
+            # Default path uses the shared production encoder (level_to_dim_arg).
+            # Explicit arg / level_in_arg keep the old A/B layouts for RE.
+            if arg is None and not level_in_arg:
+                packet = build_set_level_command(
+                    light["type"],
+                    light["channel"],
+                    light["device_id"],
+                    sent,
+                    fade=fade_byte,
+                )
+                arg_b = level_to_dim_arg(sent)
+                level_b = 0
+            else:
+                arg_b, level_b = _resolve_arg_level(
+                    sent, arg, level_in_arg=level_in_arg
+                )
+                packet = build_set_command(
+                    light["type"],
+                    light["channel"],
+                    light["device_id"],
+                    arg_b,
+                    fade=fade_byte,
+                    level=level_b,
+                )
             if not _write_packet(dev, packet, f"sent={sent}"):
                 continue
 

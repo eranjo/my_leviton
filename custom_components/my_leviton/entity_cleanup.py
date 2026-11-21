@@ -123,6 +123,23 @@ def async_cleanup_duplicate_lights(hass: HomeAssistant) -> int:
 
 
 @callback
+def async_cleanup_dim_start_numbers(hass: HomeAssistant) -> int:
+    """Remove legacy dim_start number entities (platform removed in 1.1.0b14)."""
+    registry = er.async_get(hass)
+    removed = 0
+    for entry in list(registry.entities.values()):
+        if entry.domain != "number" or entry.platform != DOMAIN:
+            continue
+        unique_id = entry.unique_id or ""
+        if not unique_id.startswith("my_leviton::dim_start::"):
+            continue
+        _LOGGER.warning("Removing legacy dim_start entity %s", entry.entity_id)
+        registry.async_remove(entry.entity_id)
+        removed += 1
+    return removed
+
+
+@callback
 def async_remove_extra_config_entries(hass: HomeAssistant, keep_entry_id: str) -> int:
     """Remove extra my_leviton config entries; keep the active one."""
     removed = 0

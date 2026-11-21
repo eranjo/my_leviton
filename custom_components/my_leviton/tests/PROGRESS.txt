@@ -1,0 +1,6 @@
+Progress — dimming fix 1.1.0b14
+==============================
+- Jump fix: near-full (≥~95%) → ARG_ON, never arg 0x10 while on
+- Removed dim_start number platform / options / brightness mapping
+- Unit tests updated; run tests/run_tests.py
+- Live verification: Office Ceiling only (Master Bedroom excluded)
