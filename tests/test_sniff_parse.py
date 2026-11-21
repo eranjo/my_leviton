@@ -61,7 +61,7 @@ class SniffParseTests(unittest.TestCase):
         light = sniff.lookup_light("Office Ceiling")
         self.assertIsNotNone(light)
         # Settled status from capture: 7E type ch id 04 LEVEL ...
-        frame = [0x7E, 0x1E, 0x03, 0x10, 0x52, 0x04, 0x32, 0x27, 0x7F]
+        frame = [0x7E, 0x1E, 0x03, 0xA2, 0x01, 0x04, 0x32, 0x27, 0x7F]
         self.assertTrue(sniff._match_light(frame, light))
         self.assertEqual(sniff._level_from_frame(frame), 0x32)
 
@@ -71,8 +71,8 @@ class SniffParseTests(unittest.TestCase):
             0x7E,
             0x1E,
             0x03,
-            0x10,
-            0x52,
+            0xA2,
+            0x01,
             0x22,
             0x03,
             0x0D,
@@ -86,7 +86,7 @@ class SniffParseTests(unittest.TestCase):
         self.assertEqual(sniff._level_from_frame(frame), 0x40)
 
     def test_reject_garbage_level(self):
-        frame = [0x7E, 0x1E, 0x03, 0x10, 0x52, 0x04, 0xEF, 0x7F]
+        frame = [0x7E, 0x1E, 0x03, 0xA2, 0x01, 0x04, 0xEF, 0x7F]
         self.assertIsNone(sniff._level_from_frame(frame))
 
     def test_level_from_cmdhdr_glued_status(self):
@@ -95,8 +95,8 @@ class SniffParseTests(unittest.TestCase):
             0x7E,
             0x1E,
             0x03,
-            0x10,
-            0x52,
+            0xA2,
+            0x01,
             0x25,
             0x0D,
             0xBC,
@@ -112,7 +112,7 @@ class SniffParseTests(unittest.TestCase):
         self.assertEqual(sniff._level_from_frame(frame), 61)
 
     def test_extract_frames(self):
-        raw = [0x00, 0x7E, 0x1E, 0x03, 0x10, 0x52, 0x04, 0x20, 0x7F, 0x00]
+        raw = [0x00, 0x7E, 0x1E, 0x03, 0xA2, 0x01, 0x04, 0x20, 0x7F, 0x00]
         frames = sniff._extract_frames(raw)
         self.assertEqual(len(frames), 1)
         self.assertEqual(frames[0][0], 0x7E)

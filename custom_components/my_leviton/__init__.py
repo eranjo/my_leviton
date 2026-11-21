@@ -13,10 +13,14 @@ from .entity_cleanup import (
     async_remove_extra_config_entries,
 )
 from .utils.commands import send_light_command
+from .utils.constants import LIGHTS
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_LISTEN_LIGHT = "Office Ceiling"
+DEFAULT_LISTEN_LIGHT = next(
+    (light["name"] for light in LIGHTS if light.get("dimmer")),
+    LIGHTS[0]["name"] if LIGHTS else "Office Ceiling",
+)
 SERVICE_LISTEN_DIMMER = "listen_dimmer"
 SERVICE_DUMP_BUS = "dump_bus"
 SERVICE_PROBE_LEVEL = "probe_level"

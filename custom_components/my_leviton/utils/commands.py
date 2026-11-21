@@ -65,7 +65,7 @@ def send_light_command(light_name: str, command_key: str) -> bool:
         # Dimmers: 0x0A restores last level (wall-button tap ON).
         # Relays (0x26): 0x0A is ignored — must use ARG_ON (0x00). b16
         # used ON_LAST for every light; post-SET readback then saw level=0
-        # and rolled the optimistic HA state back to OFF (Entry Switch repro).
+        # and rolled the optimistic HA state back to OFF (relay repro).
         if light.get("dimmer"):
             arg = ARG_ON_LAST
         else:

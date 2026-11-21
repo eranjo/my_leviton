@@ -142,12 +142,12 @@ class CleanupTests(unittest.TestCase):
         registry = FakeRegistry(
             [
                 FakeRegistryEntry(
-                    "light.bedroom_a_ceiling_dimmer",
-                    "my_leviton::Bedroom A Ceiling (dimmer)",
+                    "light.office_ceiling",
+                    "my_leviton::Office Ceiling",
                 ),
                 FakeRegistryEntry(
-                    "light.leviton_usb_lighting_bedroom_a_ceiling_dimmer",
-                    "my_leviton::Bedroom A Ceiling (dimmer)",
+                    "light.leviton_usb_lighting_office_ceiling",
+                    "my_leviton::Office Ceiling",
                 ),
             ]
         )
@@ -157,19 +157,19 @@ class CleanupTests(unittest.TestCase):
         removed = async_cleanup_duplicate_lights(hass)
         self.assertEqual(removed, 1)
         self.assertIn(
-            "light.leviton_usb_lighting_bedroom_a_ceiling_dimmer", registry.removed
+            "light.leviton_usb_lighting_office_ceiling", registry.removed
         )
-        self.assertIn("light.bedroom_a_ceiling_dimmer", registry.entities)
+        self.assertIn("light.office_ceiling", registry.entities)
         self.assertNotIn(
-            "light.leviton_usb_lighting_bedroom_a_ceiling_dimmer", registry.entities
+            "light.leviton_usb_lighting_office_ceiling", registry.entities
         )
 
     def test_renames_long_form_when_short_missing(self):
         registry = FakeRegistry(
             [
                 FakeRegistryEntry(
-                    "light.leviton_usb_lighting_bedroom_a_ceiling_dimmer",
-                    "my_leviton::Bedroom A Ceiling (dimmer)",
+                    "light.leviton_usb_lighting_office_ceiling",
+                    "my_leviton::Office Ceiling",
                 ),
             ]
         )
@@ -181,21 +181,21 @@ class CleanupTests(unittest.TestCase):
             registry.renamed,
             [
                 (
-                    "light.leviton_usb_lighting_bedroom_a_ceiling_dimmer",
-                    "light.bedroom_a_ceiling_dimmer",
+                    "light.leviton_usb_lighting_office_ceiling",
+                    "light.office_ceiling",
                 )
             ],
         )
-        self.assertIn("light.bedroom_a_ceiling_dimmer", registry.entities)
+        self.assertIn("light.office_ceiling", registry.entities)
 
     def test_keeps_short_when_long_has_unique_id_only(self):
         """Short orphan without unique_id is removed; long renamed to short."""
         registry = FakeRegistry(
             [
-                FakeRegistryEntry("light.bedroom_a_ceiling_dimmer", None),
+                FakeRegistryEntry("light.office_ceiling", None),
                 FakeRegistryEntry(
-                    "light.leviton_usb_lighting_bedroom_a_ceiling_dimmer",
-                    "my_leviton::Bedroom A Ceiling (dimmer)",
+                    "light.leviton_usb_lighting_office_ceiling",
+                    "my_leviton::Office Ceiling",
                 ),
             ]
         )
@@ -203,13 +203,13 @@ class CleanupTests(unittest.TestCase):
         cleanup_mod.er.async_get = lambda _hass: registry
 
         async_cleanup_duplicate_lights(hass)
-        self.assertIn("light.bedroom_a_ceiling_dimmer", registry.removed)
+        self.assertIn("light.office_ceiling", registry.removed)
         self.assertEqual(
             registry.renamed,
             [
                 (
-                    "light.leviton_usb_lighting_bedroom_a_ceiling_dimmer",
-                    "light.bedroom_a_ceiling_dimmer",
+                    "light.leviton_usb_lighting_office_ceiling",
+                    "light.office_ceiling",
                 )
             ],
         )

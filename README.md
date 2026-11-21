@@ -67,6 +67,13 @@ Copy `custom_components/my_leviton/` to `/config/custom_components/my_leviton` i
 
 ## Configuration
 
+The public repo ships **example** light names only (`Office Ceiling`, `Living Room Wall`, …). Edit your private inventory via either:
+
+1. `custom_components/my_leviton/utils/constants_local.py` defining `LIGHTS` (gitignored), or
+2. `/config/my_leviton_lights.yaml` (preferred; survives HACS updates) or `custom_components/my_leviton/my_leviton_lights.yaml` with a top-level `lights:` list.
+
+Do not commit real home device names or bus IDs to GitHub.
+
 [![Add Integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=my_leviton)
 ## Installation (HACS)
 1. In Home Assistant, go to **HACS → Integrations → 3‑dot menu → Custom repositories**.

@@ -22,7 +22,7 @@ from .protocol import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Captured Office Ceiling frames (physical dim):
+# Captured dimmer frames (physical dim):
 #   Settled status:  7e type ch id_hi id_lo 04 LEVEL ...
 #   Live while dim:  7e type ch id_hi id_lo 22 03 0d bb 03 LEVEL 00 ...
 _KIND_STATUS = 0x04
@@ -362,7 +362,7 @@ def _read_light_level(
     """After a SET, drain status until ``light`` appears or ``wait_sec`` elapses.
 
     A full-network POLL streams many HID reports. Re-polling every few hundred
-    ms restarts that stream and can starve later devices (e.g. 0xA204). Match
+    ms restarts that stream and can starve later devices on the bus. Match
     ``dump_bus`` pacing: poll slowly, read continuously.
     """
     notes: List[str] = []

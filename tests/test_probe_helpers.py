@@ -77,10 +77,10 @@ class ProbeHelperTests(unittest.TestCase):
         self.assertEqual(level_b, 40)
 
     def test_frame_summary_status(self):
-        frame = [0x7E, 0x1E, 0x03, 0x10, 0x52, 0x04, 0x32, 0x27, 0x7F]
+        frame = [0x7E, 0x1E, 0x03, 0xA2, 0x01, 0x04, 0x32, 0x27, 0x7F]
         text = sniff._frame_summary(frame)
         self.assertIn("type=0x1e", text)
-        self.assertIn("id=0xA204", text)
+        self.assertIn("id=0xa201", text)
         self.assertIn("status", text)
         self.assertIn("level=50", text)
 
@@ -94,11 +94,11 @@ class ProbeHelperTests(unittest.TestCase):
             "name": "Office Ceiling",
             "type": 0x1E,
             "channel": 0x03,
-            "device_id": 0xA204,
+            "device_id": 0xA201,
             "dimmer": True,
         }
         other = [0x7E, 0x1E, 0x01, 0x00, 0x11, 0x04, 0x40, 0x00, 0x7F]
-        target = [0x7E, 0x1E, 0x03, 0x10, 0x52, 0x04, 0x32, 0x00, 0x7F]
+        target = [0x7E, 0x1E, 0x03, 0xA2, 0x01, 0x04, 0x32, 0x00, 0x7F]
         reads = [
             other + [0xFF] * (64 - len(other)),
             other + [0xFF] * (64 - len(other)),
@@ -134,7 +134,7 @@ class ProbeHelperTests(unittest.TestCase):
             "name": "Office Ceiling",
             "type": 0x1E,
             "channel": 0x03,
-            "device_id": 0xA204,
+            "device_id": 0xA201,
             "dimmer": True,
         }
         other = [0x7E, 0x1E, 0x01, 0x00, 0x11, 0x04, 0x40, 0x00, 0x7F]

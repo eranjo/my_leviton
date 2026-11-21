@@ -3,7 +3,29 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
-# Local test runner output
+# Local test / probe artifacts (never publish)
 test_output.log
 **/test_output.log
-**/__pycache__/
+*.log
+**/*.log
+*.csv
+**/*.csv
+probe_*.csv
+listen_*.log
+**/probe_*.log
+**/listen_*.log
+**/my_leviton_*.log
+
+# Private home inventory (real LIGHTS names / device IDs)
+**/constants_local.py
+**/constants_local.pyi
+my_leviton_lights.yaml
+**/my_leviton_lights.yaml
+
+# Local-only notes / live verify scripts with real device names
+**/DIMMING_NOTES.txt
+**/PROGRESS.txt
+**/BUGFIX_*.txt
+**/DECODE_*_NOTES.txt
+**/verify_*.py
+**/verify_*.log

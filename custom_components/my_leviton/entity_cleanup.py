@@ -22,8 +22,8 @@ def async_cleanup_duplicate_lights(hass: HomeAssistant) -> int:
     """Drop device-prefixed duplicates; keep stable short entity IDs.
 
     After some upgrades users end up with both:
-      light.bedroom_a_ceiling_dimmer
-      light.leviton_usb_lighting_bedroom_a_ceiling_dimmer
+      light.office_ceiling
+      light.leviton_usb_lighting_office_ceiling
     Only one should remain (the short form, matching unique_id my_leviton::Name).
     """
     registry = er.async_get(hass)

@@ -109,7 +109,7 @@ def build_set_command(
 def level_to_dim_arg(level: int) -> int:
     """Map Leviton percent 0-100 to a VRUSB SET arg byte.
 
-    Live probes (Office Ceiling) showed:
+    Live probes on a 0x1E dimmer showed:
 
     * ``0x00`` → full 100%
     * ``0x01`` → off
@@ -143,7 +143,7 @@ def level_to_dim_arg(level: int) -> int:
 def needs_off_before_level(previous_level: int | None, target_level: int) -> bool:
     """Return True if an absolute SET must be preceded by OFF.
 
-    Basic jump scenarios (live Office):
+    Basic jump scenarios (live dimmer):
 
     * full/near-full (``ARG_ON``) → mid level: mid arg is ignored while on
       (96→6 stayed at 100 with bare ``arg=0x07``).

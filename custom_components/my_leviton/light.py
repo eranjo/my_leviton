@@ -42,8 +42,8 @@ _DATA_LISTEN_TASK = "bus_listen_task"
 class LevitonLight(LightEntity):
     """Represents a Leviton light entity in Home Assistant."""
 
-    # Keep legacy entity_id form (light.bedroom_a_ceiling_dimmer), not
-    # light.leviton_usb_lighting_bedroom_a_ceiling_dimmer.
+    # Keep short entity_id form (light.office_ceiling), not
+    # light.leviton_usb_lighting_office_ceiling.
     _attr_has_entity_name = False
     # Continuous shared listener is primary; HA poll is a slow safety net.
     _attr_should_poll = True
