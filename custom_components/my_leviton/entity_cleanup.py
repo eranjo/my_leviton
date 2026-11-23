@@ -220,6 +220,11 @@ def async_reenable_inventory_lights(hass: HomeAssistant) -> int:
         }
     else:
         wanted = _wanted_unique_ids()
+        # Rows with no bus address are not in the Store. Keep those entities.
+        for entry in _our_lights(registry):
+            uid = entry.unique_id or ""
+            if uid.startswith("my_leviton::"):
+                wanted.add(uid)
     if not wanted:
         return 0
     cleared = 0

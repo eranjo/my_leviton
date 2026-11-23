@@ -1,16 +1,14 @@
 """Config flow for My Leviton (USB) — discovery onboarding.
 
-Scan the VRUSB bus for addresses, correlate with the local inventory and HA
-entity registry by (type, channel, device_id), and preserve existing
-``my_leviton::{name}`` / entity_ids. New addresses prefer bus-defined names
-from status frames when present, otherwise placeholders; existing inventory /
-HA names are never removed. Users pick which new devices to import and set
+Scan the VRUSB bus for addresses, correlate with the stored device list and
+the entity registry by (type, channel, device_id), and preserve existing
+entity_ids. New addresses may be added to ``.storage/my_leviton``. Existing
+entity_ids are not renamed. Users pick which new devices to import and set
 friendly names on the same confirm step (matched renames stay optional).
 """
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
@@ -26,7 +24,12 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import DOMAIN, UNIQUE_ID
-from .utils.constants import persist_inventory, reload_lights
+from .utils.constants import (
+    addressable_rows,
+    async_save_device_list,
+    current_stored_devices,
+    reload_lights,
+)
 from .utils.discovery import (
     BusDevice,
     MatchedDevice,
@@ -283,35 +286,36 @@ def _format_rename_description(
     return "\n".join(lines)
 
 
-def _persist_selected_new(
+async def _persist_selected_new(
+    hass: HomeAssistant,
     matched: list[MatchedDevice],
     selected_keys: list[str],
     name_overrides: dict[str, str],
-    config_dir: str | None = None,
 ) -> int:
-    """Append selected new bus addresses to inventory. Returns count added."""
+    """Append selected new bus addresses to the Store. Returns count added.
+
+    Does not rename an existing entity_id and does not write the example table.
+    """
     if not selected_keys:
         return 0
-    from pathlib import Path
-
-    yaml_dir = Path(config_dir) if config_dir else None
-    inventory = list(reload_lights(yaml_dir))
+    existing = current_stored_devices()
     merged = merge_inventory_additive(
-        inventory,
+        existing,
         matched,
         include_new=True,
         selected_keys=selected_keys,
         name_overrides=name_overrides,
     )
-    added = len(merged) - len(inventory)
+    rows = addressable_rows(merged)
+    added = len(rows) - len(addressable_rows(existing))
     if added <= 0:
         return 0
-    written = persist_inventory(merged, yaml_dir)
-    reload_lights(yaml_dir)
+    saved = await async_save_device_list(hass, rows)
+    if not saved:
+        return 0
     _LOGGER.warning(
-        "Discovery appended %s new light(s) to %s (existing names unchanged)",
+        "Discovery appended %s new device(s) to .storage/my_leviton",
         added,
-        ", ".join(str(p) for p in written),
     )
     return added
 
@@ -425,12 +429,11 @@ class MyLevitonConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def _async_finish_setup(self):
-        await self.hass.async_add_executor_job(
-            _persist_selected_new,
+        await _persist_selected_new(
+            self.hass,
             self._matched,
             self._pending_import,
             self._pending_name_overrides,
-            self.hass.config.config_dir,
         )
         data = {
             "discovery": {
@@ -512,12 +515,11 @@ class MyLevitonOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def _async_finish_options(self):
-        added = await self.hass.async_add_executor_job(
-            _persist_selected_new,
+        added = await _persist_selected_new(
+            self.hass,
             self._matched,
             self._pending_import,
             self._pending_name_overrides,
-            self.hass.config.config_dir,
         )
         if added:
             await self.hass.config_entries.async_reload(self.config_entry.entry_id)

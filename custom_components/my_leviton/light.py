@@ -370,14 +370,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
     if already:
         entities = domain_data.get(_DATA_ENTITIES) or []
     else:
-        # Example rows are used only when nothing private is loaded. Existing
-        # registry lights are still passed through so HA does not disable them.
-        if (
-            inventory.INVENTORY_SOURCE == "examples"
-            and not inventory.using_private_inventory()
-        ):
+        # Example rows are used only on a brand-new install. Existing registry
+        # lights are still passed through so HA does not disable them.
+        if inventory.INVENTORY_SOURCE == "examples":
             _LOGGER.warning(
-                "Using public example lights because no private inventory file exists"
+                "Using public example lights because .storage/my_leviton "
+                "is empty and no devices are registered yet"
             )
         entities = _entities_for_inventory(hass, inventory)
         if entities:

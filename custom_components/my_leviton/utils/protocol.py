@@ -23,8 +23,8 @@ ARG_ON_LAST = 0x0A
 LEVEL_MIN = 0
 LEVEL_MAX = 100
 
-# Named allowlists for LIGHTS[*].profile (anonymized; real homes use local
-# constants_local / yaml with explicit ``levels``). USB dimmers often only
+# Named allowlists for LIGHTS[*].profile (anonymized; real homes keep
+# ``levels`` on the device row in ``.storage/my_leviton``). USB dimmers often only
 # accept a handful of absolute SET points — HA must snap, not emit mid junk.
 DIMMER_PROFILES: dict[str, tuple[int, ...]] = {
     # Typical 0x1E ceiling dimmer: floor ~61, then 10% steps to full.

@@ -2,7 +2,7 @@
 
 Matching strategy:
 
-1. Index local inventory (constants_local / yaml) by (type, channel, device_id).
+1. Index the stored device list (``.storage/my_leviton``) by (type, channel, device_id).
 2. Index HA entity registry rows for current names and entity_ids.
    Legacy rows use ``my_leviton::{name}``. Current rows use the bus address
    ``my_leviton:{type:04x}:{channel:02x}:{device_id:04x}``.
@@ -600,8 +600,8 @@ def inventory_yaml_text(lights: Sequence[Mapping[str, Any]]) -> str:
         "lights": [dict(light) for light in lights],
     }
     header = (
-        "# Private my_leviton inventory — DO NOT commit. "
-        "Survives if kept beside the package / under /config.\n"
+        "# One-time import file only. The device list is .storage/my_leviton. "
+        "Do not commit.\n"
     )
     return header + yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
 

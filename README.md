@@ -13,9 +13,9 @@ This integration requires a **116A00-1 Omni-Bus Network USB Programming Interfac
 
 ## Entity identity
 
-Each light is identified by its bus address (`type`, `channel`, and device id), not by the display name. The unique id looks like `my_leviton:001e:03:a201`. Renaming a light in the inventory or in Home Assistant does not change that unique id or the entity id.
+Each light is identified by its bus address (`type`, `channel`, and device id), not by the display name. The unique id looks like `my_leviton:001e:03:a201`. Renaming a light in Home Assistant does not change that unique id or the entity id.
 
-Keep your light list in `/config/my_leviton_lights.yaml`. Home Assistant loads that file first, then `utils/constants_local.py` if it is still present, and uses the example table only when neither file exists. A HACS update replaces the integration folder and does not replace the file in the config directory. Do not commit that file.
+The device list is kept in Home Assistant storage at `.storage/my_leviton`, keyed by bus address. Display names and entity ids live in `.storage/core.entity_registry`. A HACS update replaces the integration folder and does not replace those storage files. On a first run with an empty Store, an existing `utils/constants_local.py` or addressed rows in `/config/my_leviton_lights.yaml` are imported once. Rows without a bus address are not stored. The example table is used only for a brand-new install with an empty Store and an empty entity registry. Do not commit home device names or bus ids.
 
 ## Stable 1.1.0
 
@@ -77,7 +77,7 @@ Copy `custom_components/my_leviton/` to `/config/custom_components/my_leviton` i
 
 ## Configuration
 
-The public repo ships **example** light names only (`Office Ceiling`, `Living Room Wall`, …). Put your own list in `/config/my_leviton_lights.yaml` (top-level `lights:`). If that file is missing, `custom_components/my_leviton/utils/constants_local.py` is used when it exists. The example table is only a fallback when both are absent.
+The public repo ships **example** light names only (`Office Ceiling`, `Living Room Wall`, …). Your devices are stored in `.storage/my_leviton` after setup. Names you set in the Home Assistant UI stay in the entity registry.
 
 Do not commit real home device names or bus IDs to GitHub.
 

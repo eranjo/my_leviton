@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Callable, List
 
 from homeassistant.config_entries import ConfigEntry
@@ -100,44 +99,22 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-def _ensure_durable_inventory(hass: HomeAssistant) -> int:
-    """Copy constants_local out of the HACS folder when that is the only copy.
-
-    Does not overwrite an existing private yaml and never writes the example
-    table. Returns 0; registry names are not an address inventory.
-    """
-    config_dir = Path(hass.config.config_dir)
-    yaml_path = config_dir / "my_leviton_lights.yaml"
-    inventory.reload_lights(config_dir)
-
-    if inventory.INVENTORY_SOURCE == "constants_local" and not inventory.config_yaml_is_protected(
-        yaml_path
-    ):
-        # Copy the surviving in-package file outside the HACS folder.
-        inventory.write_private_yaml(yaml_path, inventory.LIGHTS)
-        inventory.reload_lights(config_dir)
-
-    if inventory.using_private_inventory():
-        return 0
-
-    # The entity registry stores the old name unique_id, not type/channel/device_id.
-    # Writing those names into the config yaml would hide a later address list
-    # and still could not migrate unique_ids. Leave the registry unchanged.
-    _LOGGER.error(
-        "No private Leviton inventory with bus addresses. "
-        "Existing entity_ids were left unchanged. "
-        "Put the light list in /config/my_leviton_lights.yaml"
-    )
-    return 0
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up My Leviton from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    # Discovery does not run here. Inventory is config yaml, then
-    # constants_local, then the example table only when neither file exists.
-    _ensure_durable_inventory(hass)
+    # Discovery does not run here. The device list is .storage/my_leviton.
+    # An empty Store is filled once from constants_local.py, then from
+    # addressed rows in my_leviton_lights.yaml. The example table is not
+    # applied when this integration already has entities.
+    await inventory.async_load_device_list(
+        hass, registry_has_entities=async_has_light_entries(hass)
+    )
+    if inventory.INVENTORY_SOURCE == "withheld_examples":
+        _LOGGER.error(
+            "No Leviton device list with bus addresses in .storage/my_leviton. "
+            "Existing entity_ids were left unchanged and the example table was not applied"
+        )
 
     # Older installs could create multiple config entries (flow had no guard).
     async_remove_extra_config_entries(hass, entry.entry_id)
@@ -147,11 +124,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config_entries.async_update_entry(entry, unique_id=UNIQUE_ID)
 
     # Placeholder addresses must not be applied to lights that already exist.
-    if not inventory.using_private_inventory() and async_has_light_entries(hass):
+    if (
+        inventory.INVENTORY_SOURCE != "withheld_examples"
+        and not inventory.using_private_inventory()
+        and async_has_light_entries(hass)
+    ):
         inventory.withhold_example_inventory()
         _LOGGER.error(
-            "Private inventory is missing, so existing light unique_ids and "
-            "entity_ids were not changed and the example table was not applied"
+            "Existing light unique_ids and entity_ids were not changed "
+            "and the example table was not applied"
         )
 
     # Migrate name unique_ids to bus addresses before entities are added.

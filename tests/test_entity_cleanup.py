@@ -276,8 +276,16 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(migrated, 0)
         self.assertEqual(registry.entities[SHORT_ID].unique_id, LEGACY_UID)
 
-    def test_choose_inventory_order(self):
-        private = [dict(SAMPLE)]
+    def test_choose_setup_store_then_local_then_addressed_yaml(self):
+        stored = [
+            {
+                "name": "Porch Relay",
+                "type": 0x26,
+                "channel": 0x02,
+                "device_id": 0xC101,
+                "dimmer": False,
+            }
+        ]
         local = [
             {
                 "name": "Stair Dimmer",
@@ -285,20 +293,181 @@ class CleanupTests(unittest.TestCase):
                 "channel": 0x01,
                 "device_id": 0xB101,
                 "dimmer": True,
+                "profile": "office_steps",
+                "levels": [10, 50],
             }
         ]
-        choose = self.inventory.choose_inventory
-        source, rows = choose(private, True, local, True)
+        yaml_rows = [dict(SAMPLE), {"name": "No Bus Address", "dimmer": True}]
+        choose = self.inventory.choose_setup_devices
+        source, rows, save = choose(stored, local, True, yaml_rows, True, True)
+        self.assertEqual(source, "store")
+        self.assertFalse(save)
+        self.assertEqual(rows[0]["device_id"], 0xC101)
+
+        source, rows, save = choose(None, local, True, yaml_rows, True, True)
+        self.assertEqual(source, "constants_local")
+        self.assertTrue(save)
+        self.assertEqual(rows[0]["name"], "Stair Dimmer")
+        self.assertEqual(rows[0]["levels"], [10, 50])
+
+        source, rows, save = choose(None, None, False, yaml_rows, True, True)
         self.assertEqual(source, "yaml")
+        self.assertTrue(save)
+        self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["name"], SAMPLE["name"])
-        source, rows = choose(None, False, local, True)
-        self.assertEqual(source, "constants_local")
-        self.assertEqual(rows[0]["name"], "Stair Dimmer")
-        source, _rows = choose(None, False, None, False)
+
+        full = [
+            {
+                "name": f"Relay {index}",
+                "type": 0x26 if index >= 6 else 0x1E,
+                "channel": index + 1,
+                "device_id": 0x4100 + index,
+                "dimmer": index < 6,
+            }
+            for index in range(26)
+        ]
+        source, rows, save = choose(None, None, False, full, True, True)
+        self.assertEqual(source, "yaml")
+        self.assertTrue(save)
+        self.assertEqual(len(rows), 26)
+        self.assertEqual(sum(1 for row in rows if row["dimmer"]), 6)
+        self.assertFalse(any(row["name"] in self.inventory.EXAMPLE_NAMES for row in rows))
+
+    def test_yaml_or_registry_blocks_example_table(self):
+        nameless = [{"name": f"Unaddressed {index}", "dimmer": True} for index in range(3)]
+        source, rows, save = self.inventory.choose_setup_devices(
+            None, None, False, nameless, True, True
+        )
+        self.assertEqual(source, "withheld_examples")
+        self.assertEqual(rows, [])
+        self.assertFalse(save)
+        source, rows, save = self.inventory.choose_setup_devices(
+            None, None, False, None, False, True
+        )
+        self.assertEqual(source, "withheld_examples")
+        self.assertEqual(rows, [])
+        source, rows, save = self.inventory.choose_setup_devices(
+            None, None, False, None, False, False
+        )
         self.assertEqual(source, "examples")
-        source, rows = choose(list(self.inventory._EXAMPLE_LIGHTS), True, local, True)
-        self.assertEqual(source, "constants_local")
-        self.assertEqual(rows[0]["name"], "Stair Dimmer")
+        self.assertFalse(save)
+        self.assertTrue(rows)
+
+    def test_address_key_keeps_first_name(self):
+        first = {
+            "name": "Stored Relay",
+            "type": 0x26,
+            "channel": 1,
+            "device_id": 0x2201,
+            "dimmer": False,
+        }
+        second = dict(first)
+        second["name"] = "Renamed Relay"
+        rows = self.inventory.addressable_rows([first, second])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "Stored Relay")
+        payload = self.inventory.store_payload(rows)
+        self.assertEqual(payload["devices"]["0026:01:2201"]["name"], "Stored Relay")
+
+    def test_reenable_keeps_unaddressed_entity_id(self):
+        self.inventory._set_lights([dict(SAMPLE)])
+        self.inventory.INVENTORY_SOURCE = "yaml"
+        other = "light.unaddressed_relay"
+        registry = FakeRegistry(
+            [
+                FakeRegistryEntry(SHORT_ID, ADDRESS_UID),
+                FakeRegistryEntry(
+                    other, "my_leviton::Unaddressed Relay", disabled_by="integration"
+                ),
+            ]
+        )
+        self._use(registry)
+        cleared = cleanup_mod.async_reenable_inventory_lights(self.hass)
+        self.assertEqual(cleared, 1)
+        self.assertIsNone(registry.entities[other].disabled_by)
+        self.assertEqual(registry.entities[other].entity_id, other)
+        self.assertEqual(registry.renamed, [])
+        self.assertEqual(registry.removed, [])
+
+
+class _FakeStore:
+    def __init__(self, data=None):
+        self.data = data
+        self.saved: list = []
+
+    async def async_load(self):
+        return self.data
+
+    async def async_save(self, data):
+        self.saved.append(data)
+        self.data = data
+
+
+class StoreImportTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.inventory = cleanup_mod.inventory
+        self._source = self.inventory.INVENTORY_SOURCE
+        self._lights = [dict(light) for light in self.inventory.LIGHTS]
+
+    def tearDown(self) -> None:
+        self.inventory._set_lights(self._lights)
+        self.inventory.INVENTORY_SOURCE = self._source
+
+    async def test_setup_saves_every_addressed_row_once(self):
+        lights = [
+            {
+                "name": f"Device {index}",
+                "type": 0x1E if index < 6 else 0x26,
+                "channel": index + 1,
+                "device_id": 0x5100 + index,
+                "dimmer": index < 6,
+            }
+            for index in range(26)
+        ]
+        store = _FakeStore()
+        source = await self.inventory.async_load_device_list(
+            None,
+            registry_has_entities=True,
+            store=store,
+            local_exists=False,
+            yaml_exists=True,
+            yaml_lights=lights,
+        )
+        self.assertEqual(source, "yaml")
+        self.assertEqual(len(store.saved), 1)
+        self.assertEqual(len(store.saved[0]["devices"]), 26)
+        self.assertEqual(sum(1 for row in self.inventory.LIGHTS if row["dimmer"]), 6)
+
+        source = await self.inventory.async_load_device_list(
+            None,
+            registry_has_entities=True,
+            store=store,
+            local_exists=False,
+            yaml_exists=True,
+            yaml_lights=list(self.inventory._EXAMPLE_LIGHTS),
+        )
+        self.assertEqual(source, "store")
+        self.assertEqual(len(store.saved), 1)
+        self.assertEqual(len(self.inventory.LIGHTS), 26)
+        self.assertFalse(
+            any(row["name"] in self.inventory.EXAMPLE_NAMES for row in self.inventory.LIGHTS)
+        )
+
+    async def test_save_refuses_example_table(self):
+        existing = {
+            "name": "Stored Relay",
+            "type": 0x26,
+            "channel": 1,
+            "device_id": 0x2201,
+            "dimmer": False,
+        }
+        store = _FakeStore(self.inventory.store_payload([existing]))
+        saved = await self.inventory.async_save_device_list(
+            None, list(self.inventory._EXAMPLE_LIGHTS), store=store
+        )
+        self.assertFalse(saved)
+        key = self.inventory.address_key(existing)
+        self.assertEqual(store.data["devices"][key]["name"], "Stored Relay")
 
 
 if __name__ == "__main__":

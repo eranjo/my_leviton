@@ -38,9 +38,13 @@ POLL_COMMAND = [
 # runtime with CRC-8/MAXIM — see utils/protocol.py.
 # type 0x26 = relay/switch, 0x1E/0x2E = dimmer (level 0-100).
 #
-# PUBLIC EXAMPLE inventory only. Replace via:
-#   1) utils/constants_local.py  (gitignored) defining LIGHTS, or
-#   2) /config/my_leviton_lights.yaml  (survives HACS updates)
+# PUBLIC EXAMPLE inventory only. Used solely for a brand-new install whose
+# entity registry and ``.storage/my_leviton`` Store are both empty.
+# Real devices are stored by bus address (type, channel, device_id) in that
+# Store. Display names and entity_ids live in the entity registry.
+# When the Store is empty, setup imports once, in order:
+#   1) utils/constants_local.py
+#   2) /config/my_leviton_lights.yaml rows that include type, channel, device_id
 # Do not commit real home device names or IDs to the public repository.
 
 LIGHTS: List[dict[str, Any]] = [
@@ -97,8 +101,12 @@ _EXAMPLE_LIGHTS: List[dict[str, Any]] = [dict(light) for light in LIGHTS]
 EXAMPLE_NAMES = frozenset(
     light["name"] for light in _EXAMPLE_LIGHTS if isinstance(light.get("name"), str)
 )
-# yaml | constants_local | private_unusable | examples | withheld_examples | restored
+# store | yaml | constants_local | examples | withheld_examples | unloaded
 INVENTORY_SOURCE = "examples"
+
+# Home Assistant helper Store. The file on disk is ``.storage/my_leviton``.
+STORAGE_VERSION = 1
+STORAGE_KEY = "my_leviton"
 
 
 def _coerce_int(value: Any) -> int:
@@ -131,6 +139,96 @@ def address_unique_id(light: Mapping[str, Any]) -> str | None:
 def legacy_name_unique_id(name: str) -> str:
     """Old unique_id (``my_leviton::{name}``), used only to find rows to migrate."""
     return f"my_leviton::{name}"
+
+
+def address_key(light: Mapping[str, Any]) -> str | None:
+    """Store key for a bus address: ``{type:04x}:{channel:02x}:{device_id:04x}``."""
+    uid = address_unique_id(light)
+    if not uid:
+        return None
+    prefix = "my_leviton:"
+    if not uid.startswith(prefix):
+        return None
+    return uid[len(prefix) :]
+
+
+def addressable_device(light: Mapping[str, Any]) -> dict[str, Any] | None:
+    """One Store row. Rows without type, channel, and device_id are skipped."""
+    if not isinstance(light, Mapping):
+        return None
+    try:
+        type_id = _coerce_int(light.get("type"))
+        channel = _coerce_int(light.get("channel"))
+        device_id = _coerce_int(light.get("device_id"))
+    except (TypeError, ValueError):
+        return None
+    name = light.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    device: dict[str, Any] = {
+        "name": name,
+        "type": type_id,
+        "channel": channel,
+        "device_id": device_id,
+        "dimmer": bool(light.get("dimmer")),
+    }
+    profile = light.get("profile")
+    if isinstance(profile, str) and profile:
+        device["profile"] = profile
+    levels = light.get("levels")
+    if isinstance(levels, (list, tuple)) and levels:
+        try:
+            device["levels"] = [int(level) for level in levels]
+        except (TypeError, ValueError):
+            pass
+    if light.get("min_level") is not None:
+        try:
+            device["min_level"] = int(_coerce_int(light.get("min_level")))
+        except (TypeError, ValueError):
+            pass
+    return device
+
+
+def addressable_rows(
+    lights: Iterable[Mapping[str, Any]] | None,
+) -> List[dict[str, Any]]:
+    """Address-keyed rows. The first row for an address wins; names are not merged."""
+    rows: List[dict[str, Any]] = []
+    seen: set[str] = set()
+    if not lights:
+        return rows
+    for light in lights:
+        device = addressable_device(light)
+        if device is None:
+            continue
+        key = address_key(device)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        rows.append(device)
+    return rows
+
+
+def store_payload(devices: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Serialize devices for ``.storage/my_leviton``, keyed by bus address."""
+    keyed: dict[str, dict[str, Any]] = {}
+    for device in addressable_rows(devices):
+        key = address_key(device)
+        if key and key not in keyed:
+            keyed[key] = device
+    return {"devices": keyed}
+
+
+def devices_from_store_data(data: Any) -> List[dict[str, Any]]:
+    """Load a Store payload. Accepts an address-keyed dict or a list of rows."""
+    if not isinstance(data, dict):
+        return []
+    devices = data.get("devices")
+    if isinstance(devices, dict):
+        return addressable_rows(devices.values())
+    if isinstance(devices, list):
+        return addressable_rows(devices)
+    return []
 
 
 def _load_lights_yaml(path: Path) -> List[dict[str, Any]] | None:
@@ -168,12 +266,11 @@ def _dedupe_paths(paths: Iterable[Path]) -> list[Path]:
 
 
 def config_yaml_candidates(config_dir: Path | None = None) -> list[Path]:
-    """``/config/my_leviton_lights.yaml`` candidates, outside the integration folder.
+    """Paths of ``/config/my_leviton_lights.yaml`` for a one-time Store import.
 
-    HACS replaces everything under ``custom_components/my_leviton``. The
-    durable inventory is the HA config dir (parent of ``custom_components``).
-    Both the unresolved and resolved ``__file__`` are checked so a symlink
-    into a git checkout still sees ``/config``.
+    The saved device list is ``.storage/my_leviton``, not this file. Both the
+    unresolved and resolved ``__file__`` are checked so a symlink into a git
+    checkout still sees ``/config``.
     """
     dirs: list[Path] = []
     if config_dir is not None:
@@ -205,10 +302,10 @@ def inventory_paths(config_dir: Path | None = None) -> tuple[Path, Path]:
 
 
 def preferred_inventory_yaml(config_dir: Path | None = None) -> Path:
-    """Config-dir yaml used for durable inventory writes.
+    """Config-dir yaml path. Not the ongoing device list.
 
-    Never targets a file inside the integration package. An existing config
-    yaml wins so discovery does not create a second copy.
+    Discovery and setup write ``.storage/my_leviton`` instead. An existing
+    file is still preferred so nothing creates a second copy.
     """
     candidates = config_yaml_candidates(config_dir)
     for path in candidates:
@@ -278,8 +375,8 @@ def row_is_private(light: Mapping[str, Any]) -> bool:
 
 
 def using_private_inventory() -> bool:
-    """True when the active LIGHTS list came from a private source."""
-    return INVENTORY_SOURCE in {"yaml", "constants_local", "restored"} and is_usable_private(
+    """True when LIGHTS came from the Store or a one-time private import."""
+    return INVENTORY_SOURCE in {"store", "yaml", "constants_local"} and is_usable_private(
         LIGHTS
     )
 
@@ -408,10 +505,10 @@ def write_private_yaml(path: Path, lights: List[dict[str, Any]]) -> bool:
 def persist_inventory(
     lights: List[dict[str, Any]], config_dir: Path | None = None
 ) -> list[Path]:
-    """Write an explicit discovery update to the config-dir yaml.
+    """Legacy yaml writer. Setup and discovery do not call this.
 
-    Not called on startup or update. Refuses the public example table, and
-    does not rewrite ``constants_local.py`` (HACS would delete that copy).
+    The device list is ``.storage/my_leviton``. This helper is not the
+    ongoing source of truth and refuses the public example table.
     """
     private = [dict(light) for light in lights if row_is_private(light)]
     if not is_usable_private(private) and not any(
@@ -494,28 +591,43 @@ def _load_config_yaml(
     return exists, parsed
 
 
-def choose_inventory(
-    config_yaml_lights: List[dict[str, Any]] | None,
-    config_yaml_exists: bool,
+def choose_setup_devices(
+    store_devices: List[dict[str, Any]] | None,
     local_lights: List[dict[str, Any]] | None,
     local_exists: bool,
-) -> tuple[str, List[dict[str, Any]]]:
-    """Pick inventory without letting the example table replace a private source.
+    config_yaml_lights: List[dict[str, Any]] | None,
+    config_yaml_exists: bool,
+    registry_has_entities: bool,
+) -> tuple[str, List[dict[str, Any]], bool]:
+    """Pick the device list and whether to write it into the Store once.
 
-    Order: existing ``/config/my_leviton_lights.yaml``, then ``constants_local.py``,
-    then the public examples. A private file that fails to parse does not fall
-    through to the examples. An example-only yaml is not treated as private.
+    Order: Store, then ``constants_local.py``, then yaml rows that include
+    type, channel, and device_id. Rows without a bus address are not stored.
+    The example table is returned only when the Store, both import files, and
+    the entity registry are all empty. It is never saved.
+    Returns ``(source, devices, save_to_store)``.
     """
-    if config_yaml_exists and is_usable_private(config_yaml_lights):
-        return "yaml", list(config_yaml_lights or [])
-    if local_exists and is_usable_private(local_lights):
-        return "constants_local", list(local_lights or [])
-    private_file = (config_yaml_exists and config_yaml_lights is None) or (
-        local_exists and local_lights is None
-    )
-    if private_file:
-        return "private_unusable", []
-    return "examples", [dict(light) for light in _EXAMPLE_LIGHTS]
+    stored = addressable_rows(store_devices)
+    if stored:
+        return "store", stored, False
+
+    if local_exists and local_lights is None:
+        return "withheld_examples", [], False
+    if local_exists:
+        rows = addressable_rows(local_lights or [])
+        if rows and is_usable_private(rows):
+            return "constants_local", rows, True
+
+    if config_yaml_exists and config_yaml_lights is None:
+        return "withheld_examples", [], False
+    if config_yaml_exists:
+        rows = addressable_rows(config_yaml_lights or [])
+        if rows and is_usable_private(rows):
+            return "yaml", rows, True
+
+    if registry_has_entities or local_exists or config_yaml_exists:
+        return "withheld_examples", [], False
+    return "examples", [dict(light) for light in _EXAMPLE_LIGHTS], False
 
 
 def _row_is_dimmer(capabilities: Any, supported: Any) -> bool:
@@ -570,26 +682,108 @@ def lights_from_registry_rows(
     return rows
 
 
-def _apply_local_lights(config_dir: Path | None = None) -> str:
-    """Select inventory. Private sources win; examples never replace them."""
-    global INVENTORY_SOURCE
-    yaml_exists, yaml_lights = _load_config_yaml(config_dir)
-    local_exists, local_lights = _read_constants_local()
-    source, chosen = choose_inventory(
-        yaml_lights, yaml_exists, local_lights, local_exists
-    )
-    _set_lights(chosen)
-    INVENTORY_SOURCE = source
-    _LOGGER.info(
-        "Leviton inventory source=%s count=%s", source, len(LIGHTS)
-    )
-    return source
+def current_stored_devices() -> List[dict[str, Any]]:
+    """Addressed devices already loaded. The example table is not included."""
+    if not using_private_inventory():
+        return []
+    return addressable_rows(LIGHTS)
 
 
 def reload_lights(config_dir: Path | None = None) -> List[dict[str, Any]]:
-    """Re-read config yaml / constants_local into ``LIGHTS``."""
-    _apply_local_lights(config_dir)
+    """Return the device list loaded from ``.storage/my_leviton``.
+
+    Does not re-read the yaml. That file is imported once, when the Store is empty.
+    """
+    del config_dir
     return LIGHTS
 
 
-_apply_local_lights()
+def _config_dir_from_hass(hass: Any) -> Path | None:
+    config = getattr(hass, "config", None)
+    raw = getattr(config, "config_dir", None) if config is not None else None
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def _make_store(hass: Any):
+    from homeassistant.helpers.storage import Store
+
+    return Store(hass, STORAGE_VERSION, STORAGE_KEY)
+
+
+async def async_load_device_list(
+    hass: Any,
+    *,
+    registry_has_entities: bool,
+    store: Any = None,
+    local_exists: bool | None = None,
+    local_lights: List[dict[str, Any]] | None = None,
+    yaml_exists: bool | None = None,
+    yaml_lights: List[dict[str, Any]] | None = None,
+) -> str:
+    """Load devices into ``LIGHTS`` before entities are created.
+
+    When the Store is empty, import ``constants_local.py`` or addressed yaml
+    rows once. Do not apply the example table if the registry already has
+    my_leviton entities. Rows without a bus address are left out of the Store.
+    """
+    global INVENTORY_SOURCE
+    if store is None:
+        store = _make_store(hass)
+    try:
+        raw = await store.async_load()
+    except Exception:
+        _LOGGER.exception("Could not read .storage/my_leviton")
+        raw = None
+
+    if local_exists is None:
+        local_exists, local_lights = _read_constants_local()
+    if yaml_exists is None:
+        yaml_exists, yaml_lights = _load_config_yaml(_config_dir_from_hass(hass))
+
+    source, devices, save = choose_setup_devices(
+        devices_from_store_data(raw),
+        local_lights,
+        bool(local_exists),
+        yaml_lights,
+        bool(yaml_exists),
+        registry_has_entities,
+    )
+    if save:
+        await store.async_save(store_payload(devices))
+        _LOGGER.warning(
+            "Imported %s Leviton device(s) into .storage/my_leviton from %s",
+            len(devices),
+            source,
+        )
+    _set_lights(devices)
+    INVENTORY_SOURCE = source
+    _LOGGER.info("Leviton device list source=%s count=%s", source, len(LIGHTS))
+    return source
+
+
+async def async_save_device_list(
+    hass: Any,
+    devices: List[dict[str, Any]],
+    *,
+    store: Any = None,
+) -> bool:
+    """Save addressed devices. Refuses the public example table.
+
+    Existing addresses keep the row already stored. Callers must not pass
+    the example table in place of a private list.
+    """
+    rows = addressable_rows(devices)
+    if not is_usable_private(rows):
+        _LOGGER.error(
+            "Refusing to overwrite .storage/my_leviton with the example table"
+        )
+        return False
+    if store is None:
+        store = _make_store(hass)
+    await store.async_save(store_payload(rows))
+    _set_lights(rows)
+    global INVENTORY_SOURCE
+    INVENTORY_SOURCE = "store"
+    return True
