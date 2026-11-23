@@ -8,7 +8,6 @@ from .locks import initialize_usb_lock
 from .protocol import (
     ARG_OFF,
     ARG_ON,
-    ARG_ON_LAST,
     FADE_LEVEL,
     FADE_ON_OFF,
     build_set_command,
@@ -87,14 +86,11 @@ def send_light_command(light_name: str, command_key: str) -> bool:
         return False
 
     if command_key == "on":
-        # Dimmers: 0x0A restores last level (wall-button tap ON).
-        # Relays (0x26): 0x0A is ignored — must use ARG_ON (0x00). b16
-        # used ON_LAST for every light; post-SET readback then saw level=0
-        # and rolled the optimistic HA state back to OFF (relay repro).
-        if light.get("dimmer"):
-            arg = ARG_ON_LAST
-        else:
-            arg = ARG_ON
+        # Home Assistant on with no brightness is full on. Command byte
+        # 0x00 is 100%, not off and not "restore last level" (0x0A).
+        # A wall paddle may recall its own last non-zero level; that
+        # result arrives as a status frame and is not this SET.
+        arg = ARG_ON
     elif command_key == "off":
         arg = ARG_OFF
     else:

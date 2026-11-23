@@ -53,7 +53,8 @@ class LevitonLight(LightEntity):
         self._name = name
         self._is_on = False
         self._brightness = 255 if dimmer else None
-        # Remember last non-zero brightness for last-level ON (wall-button tap).
+        # Last non-zero brightness shown. A wall paddle recalls its own last
+        # level; that result arrives as a status frame, not an HA on-tap.
         self._last_brightness = 255 if dimmer else None
         self._dimmer = dimmer
         self._attr_name = name
@@ -196,8 +197,9 @@ class LevitonLight(LightEntity):
             self._note_local_command()
             self._is_on = True
             if self._dimmer:
-                # Plain ON restores last hardware level (ARG_ON_LAST).
-                self._brightness = self._last_brightness or 255
+                # HA on with no brightness is 100%, not a last-level restore.
+                self._brightness = 255
+                self._last_brightness = 255
             self.async_write_ha_state()
             self._schedule_readback(reject_off=True)
 
