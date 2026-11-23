@@ -11,11 +11,23 @@ This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
 This integration requires a **116A00-1 Omni-Bus Network USB Programming Interface** (OB161, HAI / Leviton). The code opens that stick as USB vendor id `04d8`, product id `fe93`. Other USB adapters are not supported.
 
+## Warning: a HACS update replaces this folder
+
+A HACS update replaces the `custom_components/my_leviton` folder, including `utils/constants.py` and any `constants_local.py` stored inside that folder. The old light list in those files is gone after the update. The new version cannot copy it.
+
+Lights have to be created again with discovery, starting from the devices on the bus.
+
+Old entity ids are not reused. Automations, scripts, and scenes that point at the old lights must be pointed at the new ones.
+
+Device data after discovery is kept in `.storage/my_leviton`, which a later HACS update does not replace. Names and entity ids stay in the entity registry.
+
 ## Entity identity
 
-Each light is identified by its bus address (`type`, `channel`, and device id), not by the display name. The unique id looks like `my_leviton:001e:03:a201`. Renaming a light in Home Assistant does not change that unique id or the entity id.
+Each light is identified by its bus address (`type`, `channel`, and device id), not by the display name. The unique id is `my_leviton:{type}:{channel}:{device_id}` (hex, for example `my_leviton:001e:03:a201`). Renaming a light in Home Assistant does not change that unique id or the entity id.
 
-The device list is kept in Home Assistant storage at `.storage/my_leviton`, keyed by bus address. Display names and entity ids live in `.storage/core.entity_registry`. A HACS update replaces the integration folder and does not replace those storage files. On a first run with an empty Store, an existing `utils/constants_local.py` or addressed rows in `/config/my_leviton_lights.yaml` are imported once. Rows without a bus address are not stored. The example table is used only for a brand-new install with an empty Store and an empty entity registry. Do not commit home device names or bus ids.
+After discovery, devices are stored in Home Assistant storage at `.storage/my_leviton`, keyed by bus address (`type`, `channel`, `device_id`). Display names and entity ids live in the entity registry.
+
+The example names in the repo (Office Ceiling, Hallway Fan, and the rest) are public samples. Do not commit home device names or bus ids.
 
 ## Stable 1.1.0
 
@@ -25,7 +37,6 @@ First stable of the 1.1 line (after `1.1.0b*`). Includes:
 - Fast HA-app toggles (optimistic SET + background readback)
 - Wall-button / bus state sync via continuous short USB listen bursts
 - Shared post-SET status readback so HA matches reported levels
-- Per-dimmer **dim start** number entity (0–100%) for hardware low-end trim
 
 ### Reverse-engineering actions (optional)
 
@@ -64,7 +75,7 @@ data:
 ## Features
 - Local USB communication (requires `pyusb`)
 - Implements `light` platform (on/off relays + brightness dimmers)
-- Scans the 116A00-1 bus and matches addresses to the local inventory while keeping existing Home Assistant names
+- Scans the 116A00-1 bus and creates lights from the devices on the bus
 - CRC-8/MAXIM checksum when building USB packets
 - No cloud dependency
 - Fast toggles, wall-listener state sync, and USB capture / dump / probe services
@@ -77,7 +88,7 @@ Copy `custom_components/my_leviton/` to `/config/custom_components/my_leviton` i
 
 ## Configuration
 
-The public repo ships **example** light names only (`Office Ceiling`, `Living Room Wall`, …). Your devices are stored in `.storage/my_leviton` after setup. Names you set in the Home Assistant UI stay in the entity registry.
+The public repo ships **example** light names only (Office Ceiling, Hallway Fan, and the rest). After discovery, devices are stored in `.storage/my_leviton`. Names and entity ids you set in the Home Assistant UI stay in the entity registry.
 
 Do not commit real home device names or bus IDs to GitHub.
 
