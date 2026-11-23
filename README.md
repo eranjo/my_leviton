@@ -11,6 +11,12 @@ This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
 This integration requires a **116A00-1 Omni-Bus Network USB Programming Interface** (OB161, HAI / Leviton). The code opens that stick as USB vendor id `04d8`, product id `fe93`. Other USB adapters are not supported.
 
+## Entity identity
+
+Each light is identified by its bus address (`type`, `channel`, and device id), not by the display name. The unique id looks like `my_leviton:001e:03:a201`. Renaming a light in the inventory or in Home Assistant does not change that unique id or the entity id.
+
+Keep your light list in `/config/my_leviton_lights.yaml`. Home Assistant loads that file first, then `utils/constants_local.py` if it is still present, and uses the example table only when neither file exists. A HACS update replaces the integration folder and does not replace the file in the config directory. Do not commit that file.
+
 ## Stable 1.1.0
 
 First stable of the 1.1 line (after `1.1.0b*`). Includes:
@@ -71,10 +77,7 @@ Copy `custom_components/my_leviton/` to `/config/custom_components/my_leviton` i
 
 ## Configuration
 
-The public repo ships **example** light names only (`Office Ceiling`, `Living Room Wall`, …). Edit your private inventory via either:
-
-1. `custom_components/my_leviton/utils/constants_local.py` defining `LIGHTS` (gitignored), or
-2. `/config/my_leviton_lights.yaml` (preferred; survives HACS updates) or `custom_components/my_leviton/my_leviton_lights.yaml` with a top-level `lights:` list.
+The public repo ships **example** light names only (`Office Ceiling`, `Living Room Wall`, …). Put your own list in `/config/my_leviton_lights.yaml` (top-level `lights:`). If that file is missing, `custom_components/my_leviton/utils/constants_local.py` is used when it exists. The example table is only a fallback when both are absent.
 
 Do not commit real home device names or bus IDs to GitHub.
 

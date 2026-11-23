@@ -3,8 +3,9 @@
 Matching strategy:
 
 1. Index local inventory (constants_local / yaml) by (type, channel, device_id).
-2. Index HA entity registry rows (``my_leviton::{name}``) for current names /
-   entity_ids.
+2. Index HA entity registry rows for current names and entity_ids.
+   Legacy rows use ``my_leviton::{name}``. Current rows use the bus address
+   ``my_leviton:{type:04x}:{channel:02x}:{device_id:04x}``.
 3. Scan the bus for live addresses + last level (+ optional bus-defined name).
 4. Correlate bus → inventory by address first; fall back to registry name only
    when the inventory entry's name matches a registry unique_id suffix.
@@ -20,6 +21,7 @@ dimmer profile from the type byte when the inventory has no ``levels`` yet.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -35,6 +37,9 @@ from .protocol import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# my_leviton:{type:04x}:{channel:02x}:{device_id:04x}
+_ADDRESS_UID_RE = re.compile(r"^my_leviton:[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{4}$")
 
 # Wire types we treat as Leviton load-control devices.
 _KNOWN_TYPES = frozenset({TYPE_RELAY, TYPE_DIMMER, TYPE_DIMMER_ALT})
@@ -212,16 +217,23 @@ def parse_registry_lights(
         unique_id = str(entry.get("unique_id") or "")
         if platform and platform != "my_leviton":
             continue
-        if not unique_id.startswith("my_leviton::"):
+        legacy = unique_id.startswith("my_leviton::")
+        addressed = _ADDRESS_UID_RE.match(unique_id) is not None
+        if not legacy and not addressed:
             continue
         if entity_id and not entity_id.startswith("light."):
             continue
-        # Match key = unique_id suffix (inventory name). Prefer original_name
-        # when present so renames via registry override do not break matching.
-        inventory_name = unique_id.split("::", 1)[1]
+        # Legacy unique_ids embed the inventory name. Address unique_ids do not.
+        # Prefer original_name so a registry display-name override stays display-only.
+        if legacy:
+            inventory_name = unique_id.split("::", 1)[1]
+        else:
+            inventory_name = ""
         original = entry.get("original_name")
         if isinstance(original, str) and original.strip():
             inventory_name = original.strip()
+        if not inventory_name and not addressed:
+            continue
         override = entry.get("name")
         if isinstance(override, str) and override.strip():
             friendly = override.strip()
@@ -244,7 +256,7 @@ def parse_registry_lights(
 def index_registry_by_name(
     registry: Sequence[RegistryLight],
 ) -> dict[str, RegistryLight]:
-    return {r.name: r for r in registry}
+    return {r.name: r for r in registry if r.name}
 
 
 def placeholder_name(device: BusDevice) -> str:
@@ -277,10 +289,12 @@ def correlate_devices(
     3. New address → bus_name when present, else placeholder (user can rename
        later in inventory). Requires a valid level and ≥2 frames.
     """
+    from .constants import address_unique_id
     from .sniff import _is_clean_bus_name
 
     by_addr = index_inventory_by_addr(inventory)
     reg_by_name = index_registry_by_name(registry or [])
+    reg_by_uid = {item.unique_id: item for item in (registry or []) if item.unique_id}
     matched: list[MatchedDevice] = []
 
     for bus in bus_devices:
@@ -288,7 +302,8 @@ def correlate_devices(
         notes: list[str] = []
         if inv is not None:
             name = str(inv.get("name") or placeholder_name(bus))
-            reg = reg_by_name.get(name)
+            uid = address_unique_id(inv)
+            reg = (reg_by_uid.get(uid) if uid else None) or reg_by_name.get(name)
             levels = inv.get("levels")
             level_list = None
             if isinstance(levels, (list, tuple)):
@@ -317,7 +332,7 @@ def correlate_devices(
                     kind=bus.kind,
                     dimmer=dimmer,
                     entity_id=reg.entity_id if reg else None,
-                    unique_id=reg.unique_id if reg else f"my_leviton::{name}",
+                    unique_id=uid or (reg.unique_id if reg else None),
                     match_source="inventory_addr",
                     is_new=False,
                     last_level=bus.last_level,
@@ -351,7 +366,13 @@ def correlate_devices(
                 kind=bus.kind,
                 dimmer=bus.dimmer,
                 entity_id=None,
-                unique_id=None,
+                unique_id=address_unique_id(
+                    {
+                        "type": bus.type,
+                        "channel": bus.channel,
+                        "device_id": bus.device_id,
+                    }
+                ),
                 match_source="new",
                 is_new=True,
                 last_level=bus.last_level,
@@ -370,7 +391,8 @@ def correlate_devices(
         if key in seen_addrs:
             continue
         name = str(inv.get("name") or f"Device {key[2]:04X}")
-        reg = reg_by_name.get(name)
+        uid = address_unique_id(inv)
+        reg = (reg_by_uid.get(uid) if uid else None) or reg_by_name.get(name)
         levels = inv.get("levels")
         level_list = None
         if isinstance(levels, (list, tuple)):
@@ -387,7 +409,7 @@ def correlate_devices(
                 kind=classify_kind(key[0]),
                 dimmer=bool(inv.get("dimmer", is_dimmer_type(key[0]))),
                 entity_id=reg.entity_id if reg else None,
-                unique_id=reg.unique_id if reg else f"my_leviton::{name}",
+                unique_id=uid or (reg.unique_id if reg else None),
                 match_source="inventory_offline",
                 is_new=False,
                 last_level=None,

@@ -114,6 +114,7 @@ class FakeRegistryEntry:
     unique_id: str | None
     domain: str = "light"
     platform: str = "my_leviton"
+    disabled_by: str | None = None
 
 
 class FakeRegistry:
@@ -129,90 +130,175 @@ class FakeRegistry:
         self.entities.pop(entity_id, None)
 
     def async_update_entity(self, entity_id: str, **kwargs: Any) -> None:
+        entry = self.entities[entity_id]
+        new_uid = kwargs.get("new_unique_id")
+        if new_uid:
+            entry.unique_id = new_uid
+        if "disabled_by" in kwargs:
+            entry.disabled_by = kwargs["disabled_by"]
         new_id = kwargs.get("new_entity_id")
         if new_id:
-            entry = self.entities.pop(entity_id)
+            self.entities.pop(entity_id)
             entry.entity_id = new_id
             self.entities[new_id] = entry
             self.renamed.append((entity_id, new_id))
 
 
+# Public-example style row used only in tests. Not a home name.
+SAMPLE = {
+    "name": "Office Ceiling Dimmer",
+    "type": 0x1E,
+    "channel": 0x03,
+    "device_id": 0xA201,
+    "dimmer": True,
+}
+ADDRESS_UID = "my_leviton:001e:03:a201"
+LEGACY_UID = "my_leviton::Office Ceiling Dimmer"
+SHORT_ID = "light.office_ceiling_dimmer"
+LONG_ID = "light.leviton_usb_lighting_office_ceiling_dimmer"
+
+
 class CleanupTests(unittest.TestCase):
-    def test_removes_device_prefixed_duplicate(self):
-        registry = FakeRegistry(
-            [
-                FakeRegistryEntry(
-                    "light.office_ceiling",
-                    "my_leviton::Office Ceiling",
-                ),
-                FakeRegistryEntry(
-                    "light.leviton_usb_lighting_office_ceiling",
-                    "my_leviton::Office Ceiling",
-                ),
-            ]
-        )
-        hass = MagicMock()
+    def setUp(self) -> None:
+        self.inventory = cleanup_mod.inventory
+        self._source = self.inventory.INVENTORY_SOURCE
+        self._lights = [dict(light) for light in self.inventory.LIGHTS]
+        self.inventory._set_lights([dict(SAMPLE)])
+        self.inventory.INVENTORY_SOURCE = "yaml"
+        self.hass = MagicMock()
+
+    def tearDown(self) -> None:
+        self.inventory._set_lights(self._lights)
+        self.inventory.INVENTORY_SOURCE = self._source
+
+    def _use(self, registry: FakeRegistry) -> None:
         cleanup_mod.er.async_get = lambda _hass: registry
 
-        removed = async_cleanup_duplicate_lights(hass)
+    def test_address_unique_id_omits_name(self):
+        self.assertEqual(self.inventory.address_unique_id(SAMPLE), ADDRESS_UID)
+        self.assertEqual(
+            self.inventory.address_unique_id(
+                {"type": "0x1E", "channel": "0x03", "device_id": "0xA201"}
+            ),
+            ADDRESS_UID,
+        )
+        self.assertIsNone(self.inventory.address_unique_id({"name": SAMPLE["name"]}))
+
+    def test_removes_device_prefixed_duplicate_for_same_address(self):
+        registry = FakeRegistry(
+            [
+                FakeRegistryEntry(SHORT_ID, ADDRESS_UID),
+                FakeRegistryEntry(LONG_ID, ADDRESS_UID),
+            ]
+        )
+        self._use(registry)
+        removed = async_cleanup_duplicate_lights(self.hass)
         self.assertEqual(removed, 1)
-        self.assertIn(
-            "light.leviton_usb_lighting_office_ceiling", registry.removed
-        )
-        self.assertIn("light.office_ceiling", registry.entities)
-        self.assertNotIn(
-            "light.leviton_usb_lighting_office_ceiling", registry.entities
-        )
+        self.assertIn(LONG_ID, registry.removed)
+        self.assertIn(SHORT_ID, registry.entities)
+        self.assertNotIn(LONG_ID, registry.entities)
+        self.assertEqual(registry.renamed, [])
 
-    def test_renames_long_form_when_short_missing(self):
+    def test_does_not_rename_or_remove_when_short_id_is_missing(self):
+        registry = FakeRegistry([FakeRegistryEntry(LONG_ID, ADDRESS_UID)])
+        self._use(registry)
+        removed = async_cleanup_duplicate_lights(self.hass)
+        self.assertEqual(removed, 0)
+        self.assertEqual(registry.renamed, [])
+        self.assertIn(LONG_ID, registry.entities)
+        self.assertEqual(registry.entities[LONG_ID].entity_id, LONG_ID)
+
+    def test_does_not_remove_short_entity_id(self):
         registry = FakeRegistry(
             [
-                FakeRegistryEntry(
-                    "light.leviton_usb_lighting_office_ceiling",
-                    "my_leviton::Office Ceiling",
-                ),
+                FakeRegistryEntry(SHORT_ID, None),
+                FakeRegistryEntry(LONG_ID, LEGACY_UID),
             ]
         )
-        hass = MagicMock()
-        cleanup_mod.er.async_get = lambda _hass: registry
+        self._use(registry)
+        removed = async_cleanup_duplicate_lights(self.hass)
+        self.assertEqual(removed, 0)
+        self.assertNotIn(SHORT_ID, registry.removed)
+        self.assertIn(SHORT_ID, registry.entities)
+        self.assertIn(LONG_ID, registry.entities)
 
-        async_cleanup_duplicate_lights(hass)
-        self.assertEqual(
-            registry.renamed,
-            [
-                (
-                    "light.leviton_usb_lighting_office_ceiling",
-                    "light.office_ceiling",
-                )
-            ],
-        )
-        self.assertIn("light.office_ceiling", registry.entities)
+    def test_migration_keeps_entity_id(self):
+        registry = FakeRegistry([FakeRegistryEntry(SHORT_ID, LEGACY_UID)])
+        self._use(registry)
+        migrated = cleanup_mod.async_migrate_light_unique_ids(self.hass)
+        self.assertEqual(migrated, 1)
+        entry = registry.entities[SHORT_ID]
+        self.assertEqual(entry.unique_id, ADDRESS_UID)
+        self.assertEqual(entry.entity_id, SHORT_ID)
+        self.assertEqual(registry.renamed, [])
+        self.assertEqual(registry.removed, [])
 
-    def test_keeps_short_when_long_has_unique_id_only(self):
-        """Short orphan without unique_id is removed; long renamed to short."""
+    def test_migration_leaves_both_when_address_already_on_another_short_id(self):
+        other = "light.other_dimmer"
         registry = FakeRegistry(
             [
-                FakeRegistryEntry("light.office_ceiling", None),
-                FakeRegistryEntry(
-                    "light.leviton_usb_lighting_office_ceiling",
-                    "my_leviton::Office Ceiling",
-                ),
+                FakeRegistryEntry(SHORT_ID, LEGACY_UID),
+                FakeRegistryEntry(other, ADDRESS_UID),
             ]
         )
-        hass = MagicMock()
-        cleanup_mod.er.async_get = lambda _hass: registry
+        self._use(registry)
+        migrated = cleanup_mod.async_migrate_light_unique_ids(self.hass)
+        self.assertEqual(migrated, 0)
+        self.assertEqual(registry.entities[SHORT_ID].unique_id, LEGACY_UID)
+        self.assertEqual(registry.entities[other].unique_id, ADDRESS_UID)
+        self.assertEqual(registry.removed, [])
+        self.assertIsNone(registry.entities[SHORT_ID].disabled_by)
 
-        async_cleanup_duplicate_lights(hass)
-        self.assertIn("light.office_ceiling", registry.removed)
-        self.assertEqual(
-            registry.renamed,
+    def test_migration_prefers_existing_short_entity_id(self):
+        registry = FakeRegistry(
             [
-                (
-                    "light.leviton_usb_lighting_office_ceiling",
-                    "light.office_ceiling",
-                )
-            ],
+                FakeRegistryEntry(SHORT_ID, LEGACY_UID),
+                FakeRegistryEntry(LONG_ID, ADDRESS_UID),
+            ]
         )
+        self._use(registry)
+        migrated = cleanup_mod.async_migrate_light_unique_ids(self.hass)
+        self.assertEqual(migrated, 1)
+        self.assertEqual(registry.entities[SHORT_ID].unique_id, ADDRESS_UID)
+        self.assertEqual(registry.entities[SHORT_ID].entity_id, SHORT_ID)
+        self.assertEqual(registry.entities[LONG_ID].unique_id, ADDRESS_UID + ":duplicate")
+        self.assertEqual(registry.removed, [])
+        removed = async_cleanup_duplicate_lights(self.hass)
+        self.assertEqual(removed, 1)
+        self.assertIn(SHORT_ID, registry.entities)
+        self.assertNotIn(LONG_ID, registry.entities)
+
+    def test_migration_skipped_for_example_table(self):
+        registry = FakeRegistry([FakeRegistryEntry(SHORT_ID, LEGACY_UID)])
+        self._use(registry)
+        self.inventory.INVENTORY_SOURCE = "examples"
+        migrated = cleanup_mod.async_migrate_light_unique_ids(self.hass)
+        self.assertEqual(migrated, 0)
+        self.assertEqual(registry.entities[SHORT_ID].unique_id, LEGACY_UID)
+
+    def test_choose_inventory_order(self):
+        private = [dict(SAMPLE)]
+        local = [
+            {
+                "name": "Stair Dimmer",
+                "type": 0x1E,
+                "channel": 0x01,
+                "device_id": 0xB101,
+                "dimmer": True,
+            }
+        ]
+        choose = self.inventory.choose_inventory
+        source, rows = choose(private, True, local, True)
+        self.assertEqual(source, "yaml")
+        self.assertEqual(rows[0]["name"], SAMPLE["name"])
+        source, rows = choose(None, False, local, True)
+        self.assertEqual(source, "constants_local")
+        self.assertEqual(rows[0]["name"], "Stair Dimmer")
+        source, _rows = choose(None, False, None, False)
+        self.assertEqual(source, "examples")
+        source, rows = choose(list(self.inventory._EXAMPLE_LIGHTS), True, local, True)
+        self.assertEqual(source, "constants_local")
+        self.assertEqual(rows[0]["name"], "Stair Dimmer")
 
 
 if __name__ == "__main__":

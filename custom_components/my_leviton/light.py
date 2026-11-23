@@ -49,7 +49,7 @@ class LevitonLight(LightEntity):
     # Continuous shared listener is primary; HA poll is a slow safety net.
     _attr_should_poll = True
 
-    def __init__(self, name: str, *, dimmer: bool = False):
+    def __init__(self, name: str, *, dimmer: bool = False, unique_id: str):
         self._name = name
         self._is_on = False
         self._brightness = 255 if dimmer else None
@@ -57,8 +57,10 @@ class LevitonLight(LightEntity):
         self._last_brightness = 255 if dimmer else None
         self._dimmer = dimmer
         self._attr_name = name
-        self._attr_unique_id = f"my_leviton::{name}"
-        # suggested_object_id is NOT device-prefixed by HA — keeps short IDs.
+        # Bus address, not the display name. Callers pass unique_id.
+        self._attr_unique_id = unique_id
+        # suggested_object_id is NOT device-prefixed by HA — keeps short IDs
+        # for entities created later. Existing entity_ids are left alone.
         self._attr_suggested_object_id = slugify(name)
         if dimmer:
             self._attr_supported_color_modes = {ColorMode.BRIGHTNESS}
@@ -289,6 +291,76 @@ async def _async_bus_listen_loop(hass, entities: List[LevitonLight]) -> None:
         raise
 
 
+def _preserved_name(entry) -> str:
+    """Inventory name for a registry row we are not replacing."""
+    original = getattr(entry, "original_name", None)
+    if isinstance(original, str) and original.strip():
+        return original.strip()
+    unique_id = getattr(entry, "unique_id", "") or ""
+    if unique_id.startswith("my_leviton::"):
+        return unique_id.split("::", 1)[1]
+    return entry.entity_id.removeprefix("light.").replace("_", " ")
+
+
+def _preserved_dimmer(entry) -> bool:
+    features = getattr(entry, "supported_features", 0) or 0
+    try:
+        return bool(int(features) & 1)
+    except (TypeError, ValueError):
+        return False
+
+
+def _entities_for_inventory(hass, inventory) -> list:
+    """Address-id entities, plus registry rows this load does not replace.
+
+    Registry rows are added with their current unique_id so Home Assistant
+    does not disable them when the loaded table is different. entity_id is
+    not changed here.
+    """
+    from homeassistant.helpers import entity_registry as er
+
+    from .utils.constants import address_unique_id
+
+    entities: list[LevitonLight] = []
+    provided: set[str] = set()
+    for light in inventory.LIGHTS:
+        if not isinstance(light, dict):
+            continue
+        name = light.get("name")
+        uid = address_unique_id(light)
+        if not isinstance(name, str) or not uid or uid in provided:
+            continue
+        entities.append(
+            LevitonLight(name, dimmer=bool(light.get("dimmer")), unique_id=uid)
+        )
+        provided.add(uid)
+
+    try:
+        registry = er.async_get(hass)
+    except Exception:  # noqa: BLE001 — tests and early setup may have no registry
+        registry = None
+    if registry is None:
+        return entities
+    for entry in registry.entities.values():
+        entity_id = getattr(entry, "entity_id", "") or ""
+        if getattr(entry, "platform", None) != "my_leviton":
+            continue
+        if not entity_id.startswith("light."):
+            continue
+        uid = getattr(entry, "unique_id", None)
+        if not uid or uid in provided:
+            continue
+        entities.append(
+            LevitonLight(
+                _preserved_name(entry),
+                dimmer=_preserved_dimmer(entry),
+                unique_id=uid,
+            )
+        )
+        provided.add(uid)
+    return entities
+
+
 async def async_setup_entry(hass, entry, async_add_entities):
     from .utils import constants as inventory
 
@@ -297,24 +369,26 @@ async def async_setup_entry(hass, entry, async_add_entities):
     already = bool(domain_data.get("lights_added"))
     if already:
         entities = domain_data.get(_DATA_ENTITIES) or []
-    elif not inventory.using_private_inventory():
-        _LOGGER.error(
-            "Not creating public example Leviton entities "
-            "(source=%s count=%s)",
-            inventory.INVENTORY_SOURCE,
-            len(inventory.LIGHTS),
-        )
-        entities = []
     else:
-        domain_data["lights_added"] = True
-        entities = [
-            LevitonLight(light["name"], dimmer=bool(light.get("dimmer")))
-            for light in inventory.LIGHTS
-            if isinstance(light.get("name"), str)
-            and light["name"] not in inventory.EXAMPLE_NAMES
-        ]
-        async_add_entities(entities, update_before_add=False)
-        domain_data[_DATA_ENTITIES] = entities
+        # Example rows are used only when nothing private is loaded. Existing
+        # registry lights are still passed through so HA does not disable them.
+        if (
+            inventory.INVENTORY_SOURCE == "examples"
+            and not inventory.using_private_inventory()
+        ):
+            _LOGGER.warning(
+                "Using public example lights because no private inventory file exists"
+            )
+        entities = _entities_for_inventory(hass, inventory)
+        if entities:
+            domain_data["lights_added"] = True
+            async_add_entities(entities, update_before_add=False)
+            domain_data[_DATA_ENTITIES] = entities
+        else:
+            _LOGGER.error(
+                "No Leviton lights to add (source=%s)",
+                inventory.INVENTORY_SOURCE,
+            )
 
     # Cancel any leftover listener (reload), then start shared wall-sync loop.
     # Must be a *background* task (not async_create_task): an infinite listen

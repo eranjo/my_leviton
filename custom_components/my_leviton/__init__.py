@@ -11,7 +11,8 @@ from .const import DOMAIN, OPTIONS_DIM_START, PLATFORMS, UNIQUE_ID
 from .entity_cleanup import (
     async_cleanup_dim_start_numbers,
     async_cleanup_duplicate_lights,
-    async_disable_example_lights,
+    async_has_light_entries,
+    async_migrate_light_unique_ids,
     async_reenable_inventory_lights,
     async_remove_extra_config_entries,
 )
@@ -99,32 +100,11 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-def _registry_light_rows(hass: HomeAssistant) -> list[dict]:
-    """Entity-registry light rows for this integration. Names are not logged."""
-    from homeassistant.helpers import entity_registry as er
-
-    registry = er.async_get(hass)
-    rows: list[dict] = []
-    for entry in registry.entities.values():
-        rows.append(
-            {
-                "domain": entry.domain,
-                "platform": entry.platform,
-                "unique_id": entry.unique_id,
-                "disabled_by": entry.disabled_by,
-                "supported_features": getattr(entry, "supported_features", 0) or 0,
-                "capabilities": getattr(entry, "capabilities", None),
-            }
-        )
-    return rows
-
-
 def _ensure_durable_inventory(hass: HomeAssistant) -> int:
-    """Keep private inventory in the HA config dir and restore it if wiped.
+    """Copy constants_local out of the HACS folder when that is the only copy.
 
-    Returns how many registry names were written into a new config yaml.
-    Does not overwrite a yaml that already has non-example lights, and never
-    writes the public example table.
+    Does not overwrite an existing private yaml and never writes the example
+    table. Returns 0; registry names are not an address inventory.
     """
     config_dir = Path(hass.config.config_dir)
     yaml_path = config_dir / "my_leviton_lights.yaml"
@@ -140,27 +120,15 @@ def _ensure_durable_inventory(hass: HomeAssistant) -> int:
     if inventory.using_private_inventory():
         return 0
 
-    restored = inventory.lights_from_registry_rows(_registry_light_rows(hass))
-    if not restored:
-        _LOGGER.error(
-            "No private Leviton inventory and no previous my_leviton lights "
-            "in the entity registry; not creating example entities"
-        )
-        return 0
-    if inventory.config_yaml_is_protected(yaml_path):
-        return 0
-    if not inventory.write_private_yaml(yaml_path, restored):
-        return 0
-    inventory.reload_lights(config_dir)
-    if not inventory.using_private_inventory():
-        return 0
-    _LOGGER.warning(
-        "Restored %s Leviton light name(s) from previous entity-registry "
-        "entries into the config inventory yaml. Bus addresses are not stored "
-        "in the registry, so those rows have names only.",
-        len(restored),
+    # The entity registry stores the old name unique_id, not type/channel/device_id.
+    # Writing those names into the config yaml would hide a later address list
+    # and still could not migrate unique_ids. Leave the registry unchanged.
+    _LOGGER.error(
+        "No private Leviton inventory with bus addresses. "
+        "Existing entity_ids were left unchanged. "
+        "Put the light list in /config/my_leviton_lights.yaml"
     )
-    return len(restored)
+    return 0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -168,7 +136,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     # Discovery does not run here. Inventory is config yaml, then
-    # constants_local, then (only if both are missing) a registry restore.
+    # constants_local, then the example table only when neither file exists.
     _ensure_durable_inventory(hass)
 
     # Older installs could create multiple config entries (flow had no guard).
@@ -178,26 +146,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry.unique_id != UNIQUE_ID:
         hass.config_entries.async_update_entry(entry, unique_id=UNIQUE_ID)
 
-    # Example names must not drive registry edits. Re-enable only lights whose
-    # unique_id is my_leviton::{name} for the private inventory.
+    # Placeholder addresses must not be applied to lights that already exist.
+    if not inventory.using_private_inventory() and async_has_light_entries(hass):
+        inventory.withhold_example_inventory()
+        _LOGGER.error(
+            "Private inventory is missing, so existing light unique_ids and "
+            "entity_ids were not changed and the example table was not applied"
+        )
+
+    # Migrate name unique_ids to bus addresses before entities are added.
+    # entity_id is not passed to the registry update.
     if inventory.using_private_inventory():
-        reenabled = async_reenable_inventory_lights(hass)
-        if reenabled:
+        migrated = async_migrate_light_unique_ids(hass)
+        if migrated:
             _LOGGER.warning(
-                "Cleared disabled_by on %s previous my_leviton light(s)", reenabled
+                "Migrated %s light unique_id(s) to bus address; entity_id unchanged",
+                migrated,
             )
         removed = async_cleanup_duplicate_lights(hass)
         if removed:
-            _LOGGER.info("Removed %s duplicate Leviton light entit(y/ies)", removed)
-    disabled_examples = async_disable_example_lights(hass)
-    if disabled_examples:
+            _LOGGER.info(
+                "Removed %s device-prefixed duplicate light(s)", removed
+            )
+    reenabled = async_reenable_inventory_lights(hass)
+    if reenabled:
         _LOGGER.warning(
-            "Disabled %s public example my_leviton light(s)", disabled_examples
-        )
-    if not inventory.using_private_inventory():
-        _LOGGER.error(
-            "Skipping entity cleanup because the public example table is not "
-            "a private inventory"
+            "Cleared integration disable on %s my_leviton light(s)", reenabled
         )
 
     # 1.1.0b14: dim_start number entities / options are gone (coarse arg steps).

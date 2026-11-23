@@ -124,6 +124,11 @@ def send_light_level(
     if not light.get("dimmer"):
         _LOGGER.error("Light '%s' is not a dimmer", light_name)
         return False
+    if not _has_bus_address(light):
+        _LOGGER.error(
+            "Not sending USB command; inventory row has no bus address"
+        )
+        return False
 
     target = resolve_target_level(light, level)
     prev = (
