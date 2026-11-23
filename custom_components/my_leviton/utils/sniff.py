@@ -15,6 +15,9 @@ from .protocol import (
     ARG_OFF,
     ARG_ON,
     FADE_LEVEL,
+    TYPE_DIMMER,
+    TYPE_DIMMER_ALT,
+    TYPE_RELAY,
     build_set_command,
     build_set_level_command,
     level_to_dim_arg,
@@ -42,24 +45,284 @@ def _hex(data: Sequence[int]) -> str:
     return " ".join(f"{b:02x}" for b in data)
 
 
+# HID reads are 64 bytes; named status frames often span 2+ reports.
+# Cap an open reassembled frame so a lost 0x7F cannot grow forever.
+_MAX_REASSEMBLY_BYTES = 192
+# Flush an open prefix that is long enough for type/ch/id/kind/level.
+_MIN_PARTIAL_FRAME = 6
+# VRUSB HID report id (same as protocol TX).
+_HID_REPORT_ID = 0x02
+# Load types whose status payloads may omit the leading 0x7E on the wire.
+_LOAD_TYPES = frozenset({TYPE_RELAY, TYPE_DIMMER, TYPE_DIMMER_ALT})
+
+
+def _strip_hid_padding(raw: Sequence[int]) -> List[int]:
+    """Drop USB/HID 0xFF pad bytes (also appear between 0x7C and ASCII)."""
+    return [b for b in raw if b != 0xFF]
+
+
+def _unwrap_hid_report(raw: Sequence[int]) -> List[int]:
+    """Strip HID report id/length prefix, then 0xFF padding.
+
+    VRUSB interrupt reads are ``02 | len | payload…`` padded to 64 bytes.
+    Using *len* avoids trailing garbage (spurious ``0x7F`` / next fragment).
+    """
+    data = list(raw)
+    if len(data) >= 2 and data[0] == _HID_REPORT_ID:
+        length = int(data[1]) & 0xFF
+        end = 2 + length
+        if end > len(data):
+            end = len(data)
+        data = data[2:end]
+    return _strip_hid_padding(data)
+
+
+def _status_header_at(data: Sequence[int], index: int) -> bool:
+    """True when data[index:] looks like type/ch/id_hi/id_lo/kind(status|live)."""
+    if index + 4 >= len(data):
+        return False
+    return (
+        data[index] in _LOAD_TYPES
+        and data[index + 4] in (_KIND_STATUS, _KIND_LIVE)
+    )
+
+
+def _unframed_status_offset(data: Sequence[int]) -> Optional[int]:
+    """Return index of an unframed status header at the start of *data*, else None.
+
+    Many named status HID reports omit ``0x7E`` and begin directly with
+    ``type ch id_hi id_lo 04 LEVEL … 7c NAME``. Detecting that lets us start a
+    new frame instead of gluing the payload onto a different channel's open
+    prefix (cross-channel ``bus_name`` bug on multi-channel relays).
+    """
+    if _status_header_at(data, 0):
+        return 0
+    # Occasional leading NUL / noise before the address.
+    if len(data) > 1 and data[0] == 0x00 and _status_header_at(data, 1):
+        return 1
+    return None
+
+
+def _name_restart_offset(data: Sequence[int]) -> Optional[int]:
+    """Index of a ``0x7C`` name-restart continuation, else None.
+
+    Dump pattern: report 1 ends with ``7c`` + truncated ASCII; report 2 is
+    ``[00…] 7c FULLNAME … 7f``. Appending blindly yields two ``7c`` runs and
+    the first (truncated) name wins unless we replace from the prior ``7c``.
+    """
+    i = 0
+    while i < len(data) and data[i] == 0x00:
+        i += 1
+    if i < len(data) and data[i] == 0x7C:
+        return i
+    return None
+
+
+def _raw_ascii_after(frame: Sequence[int], start: int) -> str:
+    """Printable ASCII from *start* until NUL / control / 0x7F (may be short)."""
+    chars: List[str] = []
+    for byte in frame[start:]:
+        if byte in (0x00, 0x7F) or byte < 0x20:
+            break
+        if 0x20 <= byte <= 0x7E:
+            chars.append(chr(byte))
+        # else: skip 0x80–0xFF noise and continue joining ASCII
+    return "".join(chars).strip()
+
+
+def _ascii_run_after(frame: Sequence[int], start: int) -> Optional[str]:
+    """Printable ASCII from *start* until NUL / control / 0x7F."""
+    name = _raw_ascii_after(frame, start)
+    return name if _is_clean_bus_name(name) else None
+
+
+def _stub_after_7c(buf: Sequence[int]) -> str:
+    """Truncated wire-name stub already buffered after the first ``0x7C``."""
+    if 0x7C not in buf:
+        return ""
+    return _raw_ascii_after(buf, buf.index(0x7C) + 1)
+
+
+def _name_restart_compatible(stub: str, restart: str) -> bool:
+    """True when *restart* continues the same label as *stub* (not another device).
+
+    Dump restarts replace a truncated prefix (``AA.BB.CC`` → ``AA.BB.CCCC``).
+    An unrelated restart (``Xx`` open, ``AA.BB.CCCC`` arrives) must not merge.
+    """
+    if not restart:
+        return False
+    if not stub:
+        return True
+    return restart.startswith(stub) or stub.startswith(restart)
+
+
 def _extract_frames(raw: Sequence[int]) -> List[List[int]]:
-    """Split a USB read into 0x7E-framed payloads (best-effort)."""
-    data = [b for b in raw if b != 0xFF]
+    """Split a byte buffer into complete 0x7E…0x7F frames.
+
+    Incomplete trailing 0x7E prefixes are *not* emitted (the old 16-byte
+    fallback truncated name tails mid-report). Use :class:`HidFrameBuffer`
+    to reassemble across HID reads, or pass an already-joined buffer.
+    """
+    data = _strip_hid_padding(raw)
+    frames, _carry = _drain_complete_frames(data)
+    return frames
+
+
+def _drain_complete_frames(data: List[int]) -> Tuple[List[List[int]], List[int]]:
+    """Return (complete 0x7E…0x7F frames, leftover carry without a closing 0x7F)."""
     frames: List[List[int]] = []
     i = 0
     while i < len(data):
         if data[i] != 0x7E:
             i += 1
             continue
-        # Prefer explicit end marker; otherwise take a short window.
         try:
             end = data.index(0x7F, i + 1)
-            frames.append(data[i : end + 1])
-            i = end + 1
         except ValueError:
-            frames.append(data[i : i + 16])
-            break
-    return frames
+            return frames, data[i:]
+        frames.append(data[i : end + 1])
+        i = end + 1
+    return frames, []
+
+
+class HidFrameBuffer:
+    """Reassemble Leviton bus frames that span multiple 64-byte HID reads.
+
+    Status replies with wire names (``7c…ASCII…7f``) frequently put the
+    ``0x7E`` header in one report and the name / ``0x7F`` in the next.
+    Feeding each USB read here concatenates until complete frames emerge.
+
+    Critical: some reports carry a full ``type/ch/id/…/7c/NAME`` payload
+    *without* a leading ``0x7E``. Those must start a new frame — never append
+    onto a pending prefix for a different channel (same ``device_id``).
+
+    Also critical: after a channel switch *drops* a truncated ``7c`` stub, a
+    later name-restart report for the dropped address must not glue onto the
+    newly opened header (a name for one channel glued onto a different
+    module).
+
+    Orphan bare ``7c NAME`` restarts must never glue onto a nameless open
+    header either (a dimmer inherited another keypad's wire name).
+    Same-device names arrive as mid-payload bytes before ``7c``, or as
+    unframed ``type/ch/id/…/7c/NAME`` reports — not as ambiguous restarts.
+    Type ``0x1E``/``0x2E`` dimmers almost never carry wire names in dumps;
+    reject any ``7c`` that only appears via continuation glue onto them.
+    """
+
+    def __init__(self) -> None:
+        self._buf: List[int] = []
+        # Stub dropped on channel switch — used to recognize orphaned restarts.
+        self._dropped_stub: str = ""
+
+    @property
+    def pending(self) -> bool:
+        """True when an open 0x7E… frame is waiting for 0x7F."""
+        return bool(self._buf)
+
+    @staticmethod
+    def _open_is_dimmer(buf: Sequence[int]) -> bool:
+        return len(buf) >= 2 and buf[0] == 0x7E and buf[1] in (
+            TYPE_DIMMER,
+            TYPE_DIMMER_ALT,
+        )
+
+    def feed(self, raw: Sequence[int]) -> List[List[int]]:
+        """Append one HID read; return any newly completed frames."""
+        chunk = _unwrap_hid_report(raw)
+        if not chunk:
+            return []
+
+        out: List[List[int]] = []
+        unframed_at = _unframed_status_offset(chunk)
+        name_at = _name_restart_offset(chunk) if unframed_at is None else None
+        if unframed_at is not None:
+            # New status address in this report (often missing 0x7E on wire).
+            # Never glue onto a prior open prefix — that bound e.g.
+            # one channel's wire name onto a different channel.
+            if (
+                self._buf
+                and len(self._buf) >= _MIN_PARTIAL_FRAME
+                and self._buf[0] == 0x7E
+                and 0x7C not in self._buf
+            ):
+                # Level-only prior header: emit for addr/level, then switch.
+                out.append(list(self._buf))
+            elif self._buf and 0x7C in self._buf:
+                # Prior open ``|partial`` name is dropped (avoids truncated
+                # stubs). Remember the stub so a later name-restart for
+                # that address is not glued onto the new channel's header.
+                stub = _stub_after_7c(self._buf)
+                if stub:
+                    self._dropped_stub = stub
+            self._buf = [0x7E, *chunk[unframed_at:]]
+        elif self._buf and name_at is not None:
+            restart = _raw_ascii_after(chunk, name_at + 1)
+            if 0x7C in self._buf:
+                stub = _stub_after_7c(self._buf)
+                if _name_restart_compatible(stub, restart):
+                    # Same-channel name restart: replace truncated ``7c`` tail.
+                    # Dimmer prefixes still reject — dumps show they lack names.
+                    if self._open_is_dimmer(self._buf):
+                        self._dropped_stub = ""
+                    else:
+                        first_7c = self._buf.index(0x7C)
+                        self._buf = self._buf[:first_7c] + list(chunk[name_at:])
+                        self._dropped_stub = ""
+                elif self._dropped_stub and _name_restart_compatible(
+                    self._dropped_stub, restart
+                ):
+                    # Restart belongs to the channel we just dropped — ignore.
+                    self._dropped_stub = ""
+                # else: unrelated restart while a stub is open — ignore chunk.
+            elif self._dropped_stub and _name_restart_compatible(
+                self._dropped_stub, restart
+            ):
+                # Open header has no name yet; restart is for the dropped
+                # channel (an open header must not inherit another channel's name).
+                self._dropped_stub = ""
+            else:
+                # Bare ``7c NAME`` on a nameless open header is ambiguous —
+                # prefer reject over wrong attribution (dimmer ← another keypad).
+                # Real same-device names use mid-payload or unframed headers.
+                pass
+        elif self._buf:
+            # True continuation (name tail / mid-payload) of the open frame.
+            # Dimmer dumps rarely/never carry wire names; a ``7c`` that only
+            # appears in a continuation is cross-frame glue — drop the chunk.
+            if (
+                0x7C not in self._buf
+                and 0x7C in chunk
+                and self._open_is_dimmer(self._buf)
+            ):
+                return out
+            self._buf.extend(chunk)
+        elif 0x7E in chunk:
+            self._buf = chunk[chunk.index(0x7E) :]
+        else:
+            # Orphan name tail / padding without an open header — drop.
+            return out
+
+        if len(self._buf) > _MAX_REASSEMBLY_BYTES:
+            # Lost end marker — keep a trailing window that may still close.
+            self._buf = self._buf[-_MAX_REASSEMBLY_BYTES :]
+            if 0x7E in self._buf:
+                self._buf = self._buf[self._buf.index(0x7E) :]
+            else:
+                self._buf = []
+                return out
+
+        frames, self._buf = _drain_complete_frames(self._buf)
+        out.extend(frames)
+        return out
+
+    def flush(self) -> List[List[int]]:
+        """Emit a trailing open 0x7E prefix (addr/level) and clear the buffer."""
+        frames, carry = _drain_complete_frames(self._buf)
+        self._buf = []
+        self._dropped_stub = ""
+        if len(carry) >= _MIN_PARTIAL_FRAME and carry[0] == 0x7E:
+            frames.append(carry)
+        return frames
 
 
 def _match_light(frame: Sequence[int], light: Dict) -> bool:
@@ -103,6 +366,82 @@ def _level_from_frame(frame: Sequence[int]) -> Optional[int]:
     ):
         return _clamp_level(frame[10])
     return None
+
+
+def _is_clean_bus_name(name: Optional[str]) -> bool:
+    """True when *name* is usable wire text (printable ASCII with an alnum).
+
+    Rejects empty strings, punctuation-only junk (``§``, ``|``, ``...``),
+    and any codepoint outside 0x20–0x7E (Latin-1 mojibake from high bus bytes).
+    """
+    if not name:
+        return False
+    if any(ord(c) < 0x20 or ord(c) > 0x7E for c in name):
+        return False
+    return any(c.isalnum() for c in name)
+
+
+def _bus_name_from_frame(frame: Sequence[int]) -> Optional[str]:
+    """Extract a bus-defined device name from ``0x7C``-delimited ASCII runs.
+
+    Some kind=0x04 status replies carry ``… 7c ASCII… 7f`` (0x7C is '|').
+    HID padding 0xFF is usually stripped by ``_extract_frames`` /
+    :class:`HidFrameBuffer` first. Callers keep the longest *clean* name
+    seen per address. Returns None when no usable printable run is present.
+
+    Leviton wire labels are printable ASCII (0x20–0x7E) only. High bytes
+    (0x80–0xFF) are skipped so a single corrupt mid-name byte does not
+    insert Latin-1 mojibake (ò, Â, §) or truncate the rest of the label.
+    NUL / controls / 0x7F stop each run.
+
+    When reassembly briefly leaves two ``7c`` runs (truncated prefix + full
+    restart), the longest clean run wins — not the first.
+
+    Names bind only to *this* frame's ``type/ch/id`` header. If a second
+    status address appears before any ``0x7C`` (HID glue of two channels),
+    the name is rejected so it cannot attach to the wrong channel.
+    """
+    if len(frame) < 6 or frame[0] != 0x7E:
+        return None
+    best: Optional[str] = None
+    for idx, byte in enumerate(frame):
+        if byte != 0x7C:
+            continue
+        # After type/ch/id/kind/level (index 6+): reject a second load-status
+        # header sneaking in before this name delimiter.
+        if any(_status_header_at(frame, j) for j in range(6, idx)):
+            return None
+        name = _ascii_run_after(frame, idx + 1)
+        if name is not None and (best is None or len(name) > len(best)):
+            best = name
+    return best
+
+
+def _prefer_longer_name(
+    current: Optional[str], candidate: Optional[str]
+) -> Optional[str]:
+    """Prefer a clean ASCII bus name; among related clean names keep the longest.
+
+    A longer garbled / punctuation-only string must not displace a shorter
+    clean label (and junk candidates are ignored entirely).
+
+    Unrelated clean labels (no shared prefix) must not replace each other —
+    defense in depth against cross-channel glue (one clean label must not
+    lose to a longer unrelated label from another address).
+    """
+    cur_ok = _is_clean_bus_name(current)
+    cand_ok = _is_clean_bus_name(candidate)
+    if not cand_ok:
+        return current if cur_ok else None
+    if not cur_ok:
+        return candidate
+    assert current is not None and candidate is not None
+    related = candidate.startswith(current) or current.startswith(candidate)
+    if not related:
+        return current
+    if len(candidate) > len(current):
+        return candidate
+    return current
 
 
 def _kind_label(kind: Optional[int]) -> str:
@@ -214,6 +553,7 @@ def listen_dimmer(
         last_level: Optional[int] = None
         last_raw: Optional[Tuple[int, ...]] = None
         hits = 0
+        hid_buf = HidFrameBuffer()
 
         while time.monotonic() < deadline:
             now = time.monotonic()
@@ -230,7 +570,7 @@ def listen_dimmer(
                 continue
             last_raw = raw_t
 
-            frames = _extract_frames(raw)
+            frames = hid_buf.feed(raw)
             matched = False
             for frame in frames:
                 if not _match_light(frame, light):
@@ -289,6 +629,7 @@ def dump_bus(
         last_raw: Optional[Tuple[int, ...]] = None
         hits = 0
         seen: Dict[str, int] = {}
+        hid_buf = HidFrameBuffer()
 
         while time.monotonic() < deadline:
             now = time.monotonic()
@@ -305,9 +646,13 @@ def dump_bus(
                 continue
             last_raw = raw_t
 
-            frames = _extract_frames(raw)
+            frames = hid_buf.feed(raw)
             if not frames:
-                emit(f"raw_no_frame {_hex(raw)}")
+                # Still useful when debugging orphans / mid-name chunks.
+                if 0x7E not in raw and hid_buf.pending:
+                    emit(f"raw_continuation {_hex(raw)}")
+                elif 0x7E not in raw:
+                    emit(f"raw_no_frame {_hex(raw)}")
                 continue
 
             for frame in frames:
@@ -315,7 +660,18 @@ def dump_bus(
                 summary = _frame_summary(frame)
                 key = summary.split(" frame=")[0]
                 seen[key] = seen.get(key, 0) + 1
-                emit(f"BUS {summary}")
+                bus_name = _bus_name_from_frame(frame)
+                if bus_name:
+                    emit(f"BUS {summary} name={bus_name!r}")
+                else:
+                    emit(f"BUS {summary}")
+
+        for frame in hid_buf.flush():
+            hits += 1
+            summary = _frame_summary(frame)
+            key = summary.split(" frame=")[0]
+            seen[key] = seen.get(key, 0) + 1
+            emit(f"BUS {summary}")
 
         emit(f"DUMP_BUS done frames={hits} unique_summaries={len(seen)}")
         for key, count in sorted(seen.items(), key=lambda kv: (-kv[1], kv[0])):
@@ -362,7 +718,7 @@ def _read_light_level(
     """After a SET, drain status until ``light`` appears or ``wait_sec`` elapses.
 
     A full-network POLL streams many HID reports. Re-polling every few hundred
-    ms restarts that stream and can starve later devices on the bus. Match
+    ms restarts that stream and can starve later devices. Match
     ``dump_bus`` pacing: poll slowly, read continuously.
     """
     notes: List[str] = []
@@ -377,6 +733,7 @@ def _read_light_level(
     next_poll = 0.0
     poll_gap = max(1.5, float(poll_interval_sec))
     deadline = time.monotonic() + max(0.5, wait_sec)
+    hid_buf = HidFrameBuffer()
 
     while time.monotonic() < deadline:
         now = time.monotonic()
@@ -388,7 +745,7 @@ def _read_light_level(
         if raw is None:
             continue
 
-        for frame in _extract_frames(raw):
+        for frame in hid_buf.feed(raw):
             frames_seen += 1
             key = _addr_key(frame)
             if key:
@@ -411,6 +768,18 @@ def _read_light_level(
                         f"wait_ok frames={frames_seen} matched={matched_frames}"
                     )
                     return last_level, notes
+
+    for frame in hid_buf.flush():
+        frames_seen += 1
+        key = _addr_key(frame)
+        if key:
+            seen[key] = seen.get(key, 0) + 1
+        if not _match_light(frame, light):
+            continue
+        matched_frames += 1
+        level = _level_from_frame(frame)
+        if level is not None:
+            last_level = level
 
     top = sorted(seen.items(), key=lambda kv: (-kv[1], kv[0]))[:12]
     seen_s = ",".join(f"{k}*{c}" for k, c in top) if top else "(none)"

@@ -15,6 +15,7 @@ from homeassistant.util import slugify
 
 from . import turn_light_brightness, turn_light_off, turn_light_on
 from .const import DOMAIN
+from .utils.commands import resolve_ha_brightness
 from .utils.status import (
     command_activity_recent,
     invalidate_status_cache,
@@ -42,8 +43,8 @@ _DATA_LISTEN_TASK = "bus_listen_task"
 class LevitonLight(LightEntity):
     """Represents a Leviton light entity in Home Assistant."""
 
-    # Keep short entity_id form (light.office_ceiling), not
-    # light.leviton_usb_lighting_office_ceiling.
+    # Keep legacy entity_id form (light.office_ceiling_dimmer), not
+    # light.leviton_usb_lighting_office_ceiling_dimmer.
     _attr_has_entity_name = False
     # Continuous shared listener is primary; HA poll is a slow safety net.
     _attr_should_poll = True
@@ -169,21 +170,23 @@ class LevitonLight(LightEntity):
     async def async_turn_on(self, **kwargs):
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         if self._dimmer and brightness is not None:
+            # Snap to per-light allowlist so UI matches USB-capable steps.
+            snapped = resolve_ha_brightness(self._name, brightness)
             # Pass prior UI brightness so full→mid jumps can OFF-then-SET
             # (bare mid args are ignored after ARG_ON — see needs_off_before_level).
             prev = self._brightness
             ok = await self.hass.async_add_executor_job(
-                turn_light_brightness, self._name, brightness, prev
+                turn_light_brightness, self._name, snapped, prev
             )
             if ok:
                 # Optimistic immediately; hardware reconcile in background.
                 self._note_local_command()
-                self._is_on = brightness > 0
-                self._brightness = brightness
-                if brightness > 0:
-                    self._last_brightness = brightness
+                self._is_on = snapped > 0
+                self._brightness = snapped
+                if snapped > 0:
+                    self._last_brightness = snapped
                 self.async_write_ha_state()
-                self._schedule_readback(reject_off=brightness > 0)
+                self._schedule_readback(reject_off=snapped > 0)
             return
 
         ok = await self.hass.async_add_executor_job(turn_light_on, self._name)

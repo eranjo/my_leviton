@@ -3,12 +3,74 @@
     "step": {
       "user": {
         "title": "Set up My Leviton (USB)",
-        "description": "Connects to the Leviton VRUSB stick and creates light entities for each known switch/dimmer."
+        "description": "Scans the Leviton VRUSB stick for about {scan_sec}s, then matches each bus address to your local inventory by device ID (type / channel / id). Existing Home Assistant entity IDs and names are preserved."
+      },
+      "confirm": {
+        "title": "Confirm discovered devices",
+        "description": "{summary}",
+        "data": {
+          "New devices to import": "New devices to import",
+          "Matched devices to rename (optional)": "Matched devices to rename (optional)",
+          "import_devices": "New devices to import",
+          "rename_devices": "Matched devices to rename (optional)",
+          "noop": "Continue"
+        },
+        "data_description": {
+          "New devices to import": "Keep selected to import. Edit each Name field on this same screen (prefilled from the bus wire name when available).",
+          "Matched devices to rename (optional)": "Select matched devices whose Home Assistant friendly name you want to edit. Deselected matched devices are left unchanged (entities are never removed).",
+          "import_devices": "Keep selected to import. Edit each Name field on this same screen (prefilled from the bus wire name when available).",
+          "rename_devices": "Select matched devices whose Home Assistant friendly name you want to edit. Deselected matched devices are left unchanged (entities are never removed)."
+        }
+      },
+      "rename": {
+        "title": "Edit friendly names",
+        "description": "{summary}",
+        "data": {
+          "noop": "Continue"
+        }
       }
+    },
+    "error": {
+      "usb_error": "Could not talk to the Leviton USB stick. Check that it is plugged in and not in use."
     },
     "abort": {
       "already_configured": "My Leviton (USB) is already configured.",
       "single_instance_allowed": "This integration is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Rescan Leviton bus",
+        "description": "Scan the USB bus again and match addresses to the current inventory. Existing entities are never removed. You can import new addresses and optionally rename friendly names."
+      },
+      "confirm": {
+        "title": "Discovery results",
+        "description": "{summary}",
+        "data": {
+          "New devices to import": "New devices to import",
+          "Matched devices to rename (optional)": "Matched devices to rename (optional)",
+          "import_devices": "New devices to import",
+          "rename_devices": "Matched devices to rename (optional)",
+          "noop": "Continue"
+        },
+        "data_description": {
+          "New devices to import": "Keep selected to import. Edit each Name field on this same screen (prefilled from the bus wire name when available).",
+          "Matched devices to rename (optional)": "Select matched devices whose Home Assistant friendly name you want to edit. Deselected matched devices are left unchanged (entities are never removed).",
+          "import_devices": "Keep selected to import. Edit each Name field on this same screen (prefilled from the bus wire name when available).",
+          "rename_devices": "Select matched devices whose Home Assistant friendly name you want to edit. Deselected matched devices are left unchanged (entities are never removed)."
+        }
+      },
+      "rename": {
+        "title": "Edit friendly names",
+        "description": "{summary}",
+        "data": {
+          "noop": "Continue"
+        }
+      }
+    },
+    "error": {
+      "usb_error": "Could not talk to the Leviton USB stick. Check that it is plugged in and not in use."
     }
   },
   "title": "My Leviton (USB)"

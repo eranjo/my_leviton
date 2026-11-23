@@ -29,3 +29,7 @@ my_leviton_lights.yaml
 **/DECODE_*_NOTES.txt
 **/verify_*.py
 **/verify_*.log
+**/run_discovery*.py
+**/discovery_*.log
+**/entity_ids_*.txt
+**/DISCOVERY_*.txt

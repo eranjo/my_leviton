@@ -61,6 +61,8 @@ LIGHTS: List[dict[str, Any]] = [
         "channel": 0x03,
         "device_id": 0xA201,
         "dimmer": True,
+        # Optional: levels | min_level | profile (see protocol.DIMMER_PROFILES).
+        "profile": "office_steps",
     },
     {
         "name": "Hallway Fan",
@@ -68,6 +70,7 @@ LIGHTS: List[dict[str, Any]] = [
         "channel": 0x03,
         "device_id": 0xA301,
         "dimmer": True,
+        "profile": "fan_steps",
     },
     {
         "name": "Kitchen Switch",
@@ -108,6 +111,102 @@ def _load_lights_yaml(path: Path) -> List[dict[str, Any]] | None:
     return None
 
 
+def inventory_paths() -> tuple[Path, Path]:
+    """Return (config_dir yaml, package yaml) candidate paths."""
+    package_dir = Path(__file__).resolve().parents[1]
+    config_dir = Path(__file__).resolve().parents[3]
+    return (
+        config_dir / "my_leviton_lights.yaml",
+        package_dir / "my_leviton_lights.yaml",
+    )
+
+
+def preferred_inventory_yaml() -> Path:
+    """Path used when discovery writes additive inventory updates.
+
+    Prefer an already-present yaml (config first). If neither exists but
+    ``constants_local`` is in use, still target config-dir yaml so HACS
+    package replaces do not wipe discoveries (local py stays authoritative
+    until the operator migrates).
+    """
+    config_yaml, package_yaml = inventory_paths()
+    if config_yaml.is_file():
+        return config_yaml
+    if package_yaml.is_file():
+        return package_yaml
+    return config_yaml
+
+
+def constants_local_path() -> Path:
+    """Path to the gitignored private ``constants_local.py`` module."""
+    return Path(__file__).resolve().parent / "constants_local.py"
+
+
+def constants_local_active() -> bool:
+    """True when ``constants_local.LIGHTS`` is the live inventory source."""
+    try:
+        from . import constants_local as _local
+
+        local = getattr(_local, "LIGHTS", None)
+        return isinstance(local, list) and bool(local)
+    except ImportError:
+        return False
+
+
+def _format_light_py(light: dict[str, Any]) -> str:
+    """Serialize one LIGHTS row as a Python dict literal."""
+    parts: list[str] = []
+    name = light.get("name", "")
+    parts.append(f'"name": {name!r}')
+    for key in ("type", "channel", "device_id", "dimmer", "min_level"):
+        if key not in light:
+            continue
+        val = light[key]
+        if isinstance(val, bool):
+            parts.append(f'"{key}": {val!s}')
+        else:
+            parts.append(f'"{key}": {int(val) if isinstance(val, int) else val!r}')
+    if "profile" in light and isinstance(light["profile"], str):
+        parts.append(f'"profile": {light["profile"]!r}')
+    if "levels" in light and light["levels"] is not None:
+        levels = ", ".join(str(int(x)) for x in light["levels"])
+        parts.append(f'"levels": [{levels}]')
+    return "{" + ", ".join(parts) + "}"
+
+
+def write_constants_local(path: Path, lights: List[dict[str, Any]]) -> None:
+    """Rewrite private constants_local.py LIGHTS (volume-local; gitignored)."""
+    rows = ",\n    ".join(_format_light_py(dict(x)) for x in lights)
+    text = (
+        "# Private home inventory — DO NOT commit or publish.\n"
+        "# Loaded automatically by utils/constants.py when present.\n"
+        "from __future__ import annotations\n"
+        "\n"
+        f"LIGHTS = [\n    {rows},\n]\n"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def persist_inventory(lights: List[dict[str, Any]]) -> list[Path]:
+    """Write inventory to the live source(s) and return paths written.
+
+    When ``constants_local`` is active it is rewritten (otherwise reload would
+    ignore yaml). Always also write preferred yaml as a backup / HACS-safe copy.
+    """
+    from .discovery import write_inventory_yaml
+
+    written: list[Path] = []
+    yaml_path = preferred_inventory_yaml()
+    write_inventory_yaml(yaml_path, lights)
+    written.append(yaml_path)
+    if constants_local_active() or constants_local_path().is_file():
+        local_path = constants_local_path()
+        write_constants_local(local_path, lights)
+        written.append(local_path)
+    return written
+
+
 def _apply_local_lights() -> None:
     """Prefer private inventory over the public example table."""
     global LIGHTS
@@ -122,17 +221,25 @@ def _apply_local_lights() -> None:
         pass
 
     # YAML overrides (prefer /config so HACS package replaces do not wipe it).
-    # parents: utils → my_leviton → custom_components → config
-    package_dir = Path(__file__).resolve().parents[1]
-    config_dir = Path(__file__).resolve().parents[3]
-    for cfg in (
-        config_dir / "my_leviton_lights.yaml",
-        package_dir / "my_leviton_lights.yaml",
-    ):
+    for cfg in inventory_paths():
         loaded = _load_lights_yaml(cfg)
         if loaded:
             LIGHTS = loaded
             return
+
+
+def reload_lights() -> List[dict[str, Any]]:
+    """Re-read constants_local / yaml into ``LIGHTS`` (after discovery writes)."""
+    import importlib
+
+    try:
+        from . import constants_local as _local
+
+        importlib.reload(_local)
+    except ImportError:
+        pass
+    _apply_local_lights()
+    return LIGHTS
 
 
 _apply_local_lights()

@@ -14,7 +14,9 @@ from .protocol import (
     build_set_command,
     build_set_level_command,
     brightness_to_level,
+    level_to_brightness,
     needs_off_before_level,
+    snap_level_for_light,
 )
 from .status import mark_command_activity
 
@@ -31,6 +33,20 @@ def lookup_light(name: str) -> Optional[Dict]:
         if light.get("name") == name:
             return light
     return None
+
+
+def resolve_target_level(light: Dict, level: int) -> int:
+    """Clamp + snap a percent level using the light's local profile."""
+    return snap_level_for_light(light, level)
+
+
+def resolve_ha_brightness(light_name: str, brightness: int) -> int:
+    """Map HA brightness through the light's allowlist (for optimistic UI)."""
+    light = lookup_light(light_name)
+    if not light:
+        return max(0, min(255, int(brightness)))
+    level = resolve_target_level(light, brightness_to_level(brightness))
+    return level_to_brightness(level)
 
 
 def _send_arg(light: Dict, arg: int, *, fade: int = FADE_ON_OFF) -> bool:
@@ -89,6 +105,8 @@ def send_light_level(
 
     Uses VRUSB arg encoding (``level_to_dim_arg``). When leaving full/near-full
     for a mid level, sends OFF first — bare mid args are ignored after ARG_ON.
+    Per-light ``levels`` / ``profile`` / ``min_level`` snap the target so HA
+    never emits USB points the hardware cannot hold.
     """
     light = lookup_light(light_name)
     if not light:
@@ -98,8 +116,13 @@ def send_light_level(
         _LOGGER.error("Light '%s' is not a dimmer", light_name)
         return False
 
-    target = max(0, min(100, int(level)))
-    if needs_off_before_level(previous_level, target):
+    target = resolve_target_level(light, level)
+    prev = (
+        None
+        if previous_level is None
+        else resolve_target_level(light, previous_level)
+    )
+    if needs_off_before_level(prev, target):
         off_pkt = build_set_command(
             light["type"],
             light["channel"],
@@ -115,7 +138,7 @@ def send_light_level(
             _LOGGER.error(
                 "Failed OFF-before-SET for light '%s' (prev=%s target=%s)",
                 light.get("name"),
-                previous_level,
+                prev,
                 target,
             )
             return False
@@ -144,7 +167,7 @@ def send_light_brightness(
     *,
     previous_brightness: Optional[int] = None,
 ) -> bool:
-    """Send Home Assistant brightness 0-255 for a dimmer."""
+    """Send Home Assistant brightness 0-255 for a dimmer (snapped)."""
     prev_level = (
         None
         if previous_brightness is None

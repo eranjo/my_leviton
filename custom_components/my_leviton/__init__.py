@@ -13,7 +13,7 @@ from .entity_cleanup import (
     async_remove_extra_config_entries,
 )
 from .utils.commands import send_light_command
-from .utils.constants import LIGHTS
+from .utils.constants import LIGHTS, reload_lights
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,9 +76,23 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate config entry versions (additive; never renames entities)."""
+    if entry.version < 2:
+        # v2: discovery onboarding metadata may live in entry.data["discovery"].
+        data = dict(entry.data)
+        data.setdefault("discovery", {})
+        hass.config_entries.async_update_entry(entry, data=data, version=2)
+        _LOGGER.info("Migrated my_leviton config entry to version 2")
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up My Leviton from a config entry."""
     hass.data.setdefault(DOMAIN, {})
+
+    # Re-read inventory (constants_local / yaml) in case discovery appended rows.
+    reload_lights()
 
     # Older installs could create multiple config entries (flow had no guard).
     async_remove_extra_config_entries(hass, entry.entry_id)

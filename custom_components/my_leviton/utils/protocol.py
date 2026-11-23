@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, List, Sequence
+from typing import Any, Iterable, List, Mapping, Optional, Sequence
 
 # Device type bytes observed on the wire / in status polling.
 TYPE_RELAY = 0x26
@@ -22,6 +22,16 @@ ARG_ON_LAST = 0x0A
 # Status reports use 0x00..0x64 for off..100%.
 LEVEL_MIN = 0
 LEVEL_MAX = 100
+
+# Named allowlists for LIGHTS[*].profile (anonymized; real homes use local
+# constants_local / yaml with explicit ``levels``). USB dimmers often only
+# accept a handful of absolute SET points — HA must snap, not emit mid junk.
+DIMMER_PROFILES: dict[str, tuple[int, ...]] = {
+    # Typical 0x1E ceiling dimmer: floor ~61, then 10% steps to full.
+    "office_steps": (0, 61, 70, 80, 90, 100),
+    # Typical 0x2E fan/dimmer: mid args stick near 83; usable USB set is coarse.
+    "fan_steps": (0, 83, 90, 100),
+}
 
 _FRAME_START = 0x7E
 _FRAME_END = 0x7F
@@ -109,7 +119,7 @@ def build_set_command(
 def level_to_dim_arg(level: int) -> int:
     """Map Leviton percent 0-100 to a VRUSB SET arg byte.
 
-    Live probes on a 0x1E dimmer showed:
+    Live probes on a VRUSB dimmer showed:
 
     * ``0x00`` → full 100%
     * ``0x01`` → off
@@ -181,6 +191,76 @@ def brightness_to_level(brightness: int) -> int:
     if brightness >= 255:
         return LEVEL_MAX
     return max(1, min(LEVEL_MAX, round(brightness * LEVEL_MAX / 255)))
+
+
+def level_to_brightness(level: int) -> int:
+    """Map Leviton percent 0-100 to Home Assistant brightness 0-255."""
+    level = max(LEVEL_MIN, min(LEVEL_MAX, int(level)))
+    if level <= 0:
+        return 0
+    if level >= LEVEL_MAX:
+        return 255
+    return max(1, min(255, round(level * 255 / LEVEL_MAX)))
+
+
+def resolve_profile_levels(
+    light: Mapping[str, Any] | None,
+) -> Optional[tuple[int, ...]]:
+    """Return an allowlist from ``levels`` / ``profile`` on a LIGHTS entry."""
+    if not light:
+        return None
+    raw = light.get("levels")
+    if raw is not None:
+        try:
+            vals = tuple(sorted({max(LEVEL_MIN, min(LEVEL_MAX, int(x))) for x in raw}))
+        except (TypeError, ValueError):
+            return None
+        return vals or None
+    profile = light.get("profile")
+    if isinstance(profile, str) and profile in DIMMER_PROFILES:
+        return DIMMER_PROFILES[profile]
+    return None
+
+
+def snap_level(
+    level: int,
+    *,
+    levels: Sequence[int] | None = None,
+    min_level: int | None = None,
+) -> int:
+    """Snap a percent level to an allowlist and/or floor.
+
+    * ``levels``: nearest member (0 stays 0; positive requests never snap to 0).
+    * ``min_level``: when no allowlist, clamp positive levels up to the floor.
+    """
+    level = max(LEVEL_MIN, min(LEVEL_MAX, int(level)))
+    if level <= 0:
+        return LEVEL_MIN
+
+    if levels:
+        allow = sorted({max(LEVEL_MIN, min(LEVEL_MAX, int(x))) for x in levels})
+        positive = [x for x in allow if x > 0]
+        if positive:
+            # Tie-break toward the higher step so 85→90 not 80 on {80,90}.
+            return min(positive, key=lambda x: (abs(x - level), -x))
+
+    if min_level is not None:
+        floor = max(LEVEL_MIN, min(LEVEL_MAX, int(min_level)))
+        if floor > 0:
+            return max(floor, level)
+    return level
+
+
+def snap_level_for_light(light: Mapping[str, Any] | None, level: int) -> int:
+    """Snap using a LIGHTS entry's ``levels`` / ``profile`` / ``min_level``."""
+    allow = resolve_profile_levels(light)
+    min_level = None
+    if light is not None and light.get("min_level") is not None:
+        try:
+            min_level = int(light["min_level"])
+        except (TypeError, ValueError):
+            min_level = None
+    return snap_level(level, levels=allow, min_level=min_level)
 
 
 def is_dimmer_type(device_type: int) -> bool:

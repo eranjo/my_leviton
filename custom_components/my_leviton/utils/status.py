@@ -14,9 +14,9 @@ import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .constants import LIGHTS
-from .protocol import LEVEL_MAX, brightness_to_level
+from .protocol import LEVEL_MAX, brightness_to_level, level_to_brightness
 from .sniff import (
-    _extract_frames,
+    HidFrameBuffer,
     _level_from_frame,
     _match_light,
     _open_usb,
@@ -76,16 +76,6 @@ def command_activity_recent(*, within_sec: float = _CMD_QUIET_SEC) -> bool:
         if _CMD_MONO <= 0:
             return False
         return (time.monotonic() - _CMD_MONO) < within_sec
-
-
-def level_to_brightness(level: int) -> int:
-    """Map Leviton percent 0-100 to Home Assistant brightness 0-255."""
-    level = max(0, min(LEVEL_MAX, int(level)))
-    if level <= 0:
-        return 0
-    if level >= LEVEL_MAX:
-        return 255
-    return max(1, min(255, round(level * 255 / LEVEL_MAX)))
 
 
 def level_to_entity_state(level: int, *, dimmer: bool) -> Tuple[bool, Optional[int]]:
@@ -160,6 +150,7 @@ def _collect_levels(
     with _open_usb() as dev:
         deadline = time.monotonic() + max(0.25, wait_sec)
         next_poll = 0.0
+        hid_buf = HidFrameBuffer()
         while time.monotonic() < deadline:
             if abort_on_command and command_activity_recent():
                 break
@@ -176,7 +167,7 @@ def _collect_levels(
             raw = _read_raw(dev, timeout_ms=100)
             if raw is None:
                 continue
-            for frame in _extract_frames(raw):
+            for frame in hid_buf.feed(raw):
                 if only_light is not None and not _match_light(frame, only_light):
                     continue
                 key = _addr_tuple(frame)
@@ -201,6 +192,19 @@ def _collect_levels(
                     prev = exit_when_changed_from.get(name)
                     if prev is not None and int(prev) != int(level):
                         return by_name
+        for frame in hid_buf.flush():
+            if only_light is not None and not _match_light(frame, only_light):
+                continue
+            key = _addr_tuple(frame)
+            if key is None:
+                continue
+            light = index.get(key)
+            if light is None:
+                continue
+            level = _level_from_frame(frame)
+            if level is None:
+                continue
+            by_name.setdefault(light["name"], []).append(level)
     return by_name
 
 

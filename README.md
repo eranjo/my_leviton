@@ -7,6 +7,10 @@
 
 This repo packages the `my_leviton` integration as a HACS-compatible repository.
 
+## Required hardware
+
+This integration requires a **116A00-1 Omni-Bus Network USB Programming Interface** (OB161, HAI / Leviton). The code opens that stick as USB vendor id `04d8`, product id `fe93`. Other USB adapters are not supported.
+
 ## Stable 1.1.0
 
 First stable of the 1.1 line (after `1.1.0b*`). Includes:
