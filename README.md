@@ -53,12 +53,12 @@ data:
 | `my_leviton.listen_dimmer` | `/config/my_leviton_capture.log` |
 
 ## Still to do
-- Automatic discovery of devices on the bus network
 - Optional auto-probe for dim start
 
 ## Features
 - Local USB communication (requires `pyusb`)
 - Implements `light` platform (on/off relays + brightness dimmers)
+- Scans the 116A00-1 bus and matches addresses to the local inventory while keeping existing Home Assistant names
 - CRC-8/MAXIM checksum when building USB packets
 - No cloud dependency
 - Fast toggles, wall-listener state sync, and USB capture / dump / probe services
