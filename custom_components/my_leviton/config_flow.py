@@ -10,6 +10,7 @@ friendly names on the same confirm step (matched renames stay optional).
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
@@ -286,11 +287,15 @@ def _persist_selected_new(
     matched: list[MatchedDevice],
     selected_keys: list[str],
     name_overrides: dict[str, str],
+    config_dir: str | None = None,
 ) -> int:
     """Append selected new bus addresses to inventory. Returns count added."""
     if not selected_keys:
         return 0
-    inventory = list(reload_lights())
+    from pathlib import Path
+
+    yaml_dir = Path(config_dir) if config_dir else None
+    inventory = list(reload_lights(yaml_dir))
     merged = merge_inventory_additive(
         inventory,
         matched,
@@ -301,8 +306,8 @@ def _persist_selected_new(
     added = len(merged) - len(inventory)
     if added <= 0:
         return 0
-    written = persist_inventory(merged)
-    reload_lights()
+    written = persist_inventory(merged, yaml_dir)
+    reload_lights(yaml_dir)
     _LOGGER.warning(
         "Discovery appended %s new light(s) to %s (existing names unchanged)",
         added,
@@ -425,6 +430,7 @@ class MyLevitonConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._matched,
             self._pending_import,
             self._pending_name_overrides,
+            self.hass.config.config_dir,
         )
         data = {
             "discovery": {
@@ -511,6 +517,7 @@ class MyLevitonOptionsFlow(config_entries.OptionsFlow):
             self._matched,
             self._pending_import,
             self._pending_name_overrides,
+            self.hass.config.config_dir,
         )
         if added:
             await self.hass.config_entries.async_reload(self.config_entry.entry_id)

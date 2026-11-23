@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import slugify
 
 from .const import DEVICE_ENTITY_ID_PREFIX, DOMAIN
-from .utils.constants import LIGHTS
+from .utils import constants as inventory
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +32,9 @@ def async_cleanup_duplicate_lights(hass: HomeAssistant) -> int:
     removed = 0
 
     by_slug: dict[str, str] = {
-        slugify(light["name"]): _expected_unique_id(light["name"]) for light in LIGHTS
+        slugify(light["name"]): _expected_unique_id(light["name"])
+        for light in inventory.LIGHTS
+        if isinstance(light.get("name"), str)
     }
 
     # Prefer handling long (device-prefixed) ids first so renames happen before
@@ -120,6 +124,89 @@ def async_cleanup_duplicate_lights(hass: HomeAssistant) -> int:
             removed += 1
 
     return removed
+
+
+@callback
+def async_reenable_inventory_lights(hass: HomeAssistant) -> int:
+    """Clear disabled_by for private my_leviton lights so a reload can add them.
+
+    Only unique_ids ``my_leviton::{name}`` for the current private inventory.
+    Public example names are left alone. Nothing is deleted.
+    """
+    if not inventory.using_private_inventory():
+        return 0
+    wanted = {
+        _expected_unique_id(light["name"])
+        for light in inventory.LIGHTS
+        if isinstance(light.get("name"), str)
+        and light["name"] not in inventory.EXAMPLE_NAMES
+    }
+    registry = er.async_get(hass)
+    cleared = 0
+    for entry in list(registry.entities.values()):
+        if entry.domain != "light" or entry.platform != DOMAIN:
+            continue
+        if entry.unique_id not in wanted:
+            continue
+        if entry.disabled_by is None:
+            continue
+        registry.async_update_entity(entry.entity_id, disabled_by=None)
+        cleared += 1
+    if cleared:
+        _LOGGER.warning(
+            "Re-enabled %s previous my_leviton light(s) with matching unique_id",
+            cleared,
+        )
+    return cleared
+
+
+def _yaml_referenced_entity_ids(hass: HomeAssistant) -> set[str]:
+    """Entity ids mentioned in automations, scripts, or scenes."""
+    found: set[str] = set()
+    config_dir = getattr(getattr(hass, "config", None), "config_dir", None)
+    if not config_dir:
+        return found
+    base = Path(config_dir)
+    for name in ("automations.yaml", "scripts.yaml", "scenes.yaml"):
+        try:
+            text = (base / name).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        found.update(re.findall(r"light\.[a-z0-9_]+", text))
+    return found
+
+
+@callback
+def async_disable_example_lights(hass: HomeAssistant) -> int:
+    """Disable public example lights. Keep any example entity id used by YAML.
+
+    Does not delete entries and does not touch other integrations.
+    """
+    registry = er.async_get(hass)
+    referenced = _yaml_referenced_entity_ids(hass)
+    disabler = er.RegistryEntryDisabler.USER
+    disabled = 0
+    for entry in list(registry.entities.values()):
+        if entry.domain != "light" or entry.platform != DOMAIN:
+            continue
+        unique_id = entry.unique_id or ""
+        if not str(unique_id).startswith("my_leviton::"):
+            continue
+        name = str(unique_id).split("::", 1)[1]
+        if name not in inventory.EXAMPLE_NAMES:
+            continue
+        if entry.entity_id in referenced:
+            continue
+        if entry.disabled_by is not None:
+            continue
+        registry.async_update_entity(entry.entity_id, disabled_by=disabler)
+        disabled += 1
+    if disabled:
+        _LOGGER.warning(
+            "Disabled %s public example my_leviton light(s)",
+            disabled,
+        )
+    return disabled
 
 
 @callback

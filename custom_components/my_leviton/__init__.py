@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Callable, List
 
 from homeassistant.config_entries import ConfigEntry
@@ -10,17 +11,28 @@ from .const import DOMAIN, OPTIONS_DIM_START, PLATFORMS, UNIQUE_ID
 from .entity_cleanup import (
     async_cleanup_dim_start_numbers,
     async_cleanup_duplicate_lights,
+    async_disable_example_lights,
+    async_reenable_inventory_lights,
     async_remove_extra_config_entries,
 )
 from .utils.commands import send_light_command
-from .utils.constants import LIGHTS, reload_lights
+from .utils import constants as inventory
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_LISTEN_LIGHT = next(
-    (light["name"] for light in LIGHTS if light.get("dimmer")),
-    LIGHTS[0]["name"] if LIGHTS else "Office Ceiling",
-)
+
+def _default_listen_light() -> str:
+    """Current private inventory dimmer, for service defaults."""
+    if not inventory.using_private_inventory():
+        return ""
+    for light in inventory.LIGHTS:
+        if light.get("dimmer") and isinstance(light.get("name"), str):
+            return light["name"]
+    if inventory.LIGHTS and isinstance(inventory.LIGHTS[0].get("name"), str):
+        return inventory.LIGHTS[0]["name"]
+    return ""
+
+
 SERVICE_LISTEN_DIMMER = "listen_dimmer"
 SERVICE_DUMP_BUS = "dump_bus"
 SERVICE_PROBE_LEVEL = "probe_level"
@@ -87,12 +99,77 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+def _registry_light_rows(hass: HomeAssistant) -> list[dict]:
+    """Entity-registry light rows for this integration. Names are not logged."""
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+    rows: list[dict] = []
+    for entry in registry.entities.values():
+        rows.append(
+            {
+                "domain": entry.domain,
+                "platform": entry.platform,
+                "unique_id": entry.unique_id,
+                "disabled_by": entry.disabled_by,
+                "supported_features": getattr(entry, "supported_features", 0) or 0,
+                "capabilities": getattr(entry, "capabilities", None),
+            }
+        )
+    return rows
+
+
+def _ensure_durable_inventory(hass: HomeAssistant) -> int:
+    """Keep private inventory in the HA config dir and restore it if wiped.
+
+    Returns how many registry names were written into a new config yaml.
+    Does not overwrite a yaml that already has non-example lights, and never
+    writes the public example table.
+    """
+    config_dir = Path(hass.config.config_dir)
+    yaml_path = config_dir / "my_leviton_lights.yaml"
+    inventory.reload_lights(config_dir)
+
+    if inventory.INVENTORY_SOURCE == "constants_local" and not inventory.config_yaml_is_protected(
+        yaml_path
+    ):
+        # Copy the surviving in-package file outside the HACS folder.
+        inventory.write_private_yaml(yaml_path, inventory.LIGHTS)
+        inventory.reload_lights(config_dir)
+
+    if inventory.using_private_inventory():
+        return 0
+
+    restored = inventory.lights_from_registry_rows(_registry_light_rows(hass))
+    if not restored:
+        _LOGGER.error(
+            "No private Leviton inventory and no previous my_leviton lights "
+            "in the entity registry; not creating example entities"
+        )
+        return 0
+    if inventory.config_yaml_is_protected(yaml_path):
+        return 0
+    if not inventory.write_private_yaml(yaml_path, restored):
+        return 0
+    inventory.reload_lights(config_dir)
+    if not inventory.using_private_inventory():
+        return 0
+    _LOGGER.warning(
+        "Restored %s Leviton light name(s) from previous entity-registry "
+        "entries into the config inventory yaml. Bus addresses are not stored "
+        "in the registry, so those rows have names only.",
+        len(restored),
+    )
+    return len(restored)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up My Leviton from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    # Re-read inventory (constants_local / yaml) in case discovery appended rows.
-    reload_lights()
+    # Discovery does not run here. Inventory is config yaml, then
+    # constants_local, then (only if both are missing) a registry restore.
+    _ensure_durable_inventory(hass)
 
     # Older installs could create multiple config entries (flow had no guard).
     async_remove_extra_config_entries(hass, entry.entry_id)
@@ -101,9 +178,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry.unique_id != UNIQUE_ID:
         hass.config_entries.async_update_entry(entry, unique_id=UNIQUE_ID)
 
-    removed = async_cleanup_duplicate_lights(hass)
-    if removed:
-        _LOGGER.info("Removed %s duplicate Leviton light entit(y/ies)", removed)
+    # Example names must not drive registry edits. Re-enable only lights whose
+    # unique_id is my_leviton::{name} for the private inventory.
+    if inventory.using_private_inventory():
+        reenabled = async_reenable_inventory_lights(hass)
+        if reenabled:
+            _LOGGER.warning(
+                "Cleared disabled_by on %s previous my_leviton light(s)", reenabled
+            )
+        removed = async_cleanup_duplicate_lights(hass)
+        if removed:
+            _LOGGER.info("Removed %s duplicate Leviton light entit(y/ies)", removed)
+    disabled_examples = async_disable_example_lights(hass)
+    if disabled_examples:
+        _LOGGER.warning(
+            "Disabled %s public example my_leviton light(s)", disabled_examples
+        )
+    if not inventory.using_private_inventory():
+        _LOGGER.error(
+            "Skipping entity cleanup because the public example table is not "
+            "a private inventory"
+        )
 
     # 1.1.0b14: dim_start number entities / options are gone (coarse arg steps).
     n_dim = async_cleanup_dim_start_numbers(hass)
@@ -121,7 +216,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def async_listen_dimmer(call: ServiceCall) -> None:
         """Capture USB frames while the physical dimmer is used."""
-        light = call.data.get("light", DEFAULT_LISTEN_LIGHT)
+        light = call.data.get("light", _default_listen_light())
         duration = float(call.data.get("duration", 90))
 
         def _run() -> list[str]:
@@ -146,7 +241,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def async_probe_level(call: ServiceCall) -> None:
         """Send SET level(s) and log what status the dimmer reports back."""
-        light = call.data.get("light", DEFAULT_LISTEN_LIGHT)
+        light = call.data.get("light", _default_listen_light())
         sweep = bool(call.data.get("sweep", False))
         level = call.data.get("level")
         step = int(call.data.get("step", 5))

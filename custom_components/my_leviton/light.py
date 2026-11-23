@@ -290,18 +290,28 @@ async def _async_bus_listen_loop(hass, entities: List[LevitonLight]) -> None:
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    from .utils.constants import LIGHTS
+    from .utils import constants as inventory
 
     # Guard against double registration within one hass instance.
     domain_data = hass.data.setdefault(DOMAIN, {})
     already = bool(domain_data.get("lights_added"))
     if already:
         entities = domain_data.get(_DATA_ENTITIES) or []
+    elif not inventory.using_private_inventory():
+        _LOGGER.error(
+            "Not creating public example Leviton entities "
+            "(source=%s count=%s)",
+            inventory.INVENTORY_SOURCE,
+            len(inventory.LIGHTS),
+        )
+        entities = []
     else:
         domain_data["lights_added"] = True
         entities = [
             LevitonLight(light["name"], dimmer=bool(light.get("dimmer")))
-            for light in LIGHTS
+            for light in inventory.LIGHTS
+            if isinstance(light.get("name"), str)
+            and light["name"] not in inventory.EXAMPLE_NAMES
         ]
         async_add_entities(entities, update_before_add=False)
         domain_data[_DATA_ENTITIES] = entities

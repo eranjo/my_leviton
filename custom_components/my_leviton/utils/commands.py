@@ -49,7 +49,16 @@ def resolve_ha_brightness(light_name: str, brightness: int) -> int:
     return level_to_brightness(level)
 
 
+def _has_bus_address(light: Dict) -> bool:
+    return all(light.get(key) is not None for key in ("type", "channel", "device_id"))
+
+
 def _send_arg(light: Dict, arg: int, *, fade: int = FADE_ON_OFF) -> bool:
+    if not _has_bus_address(light):
+        _LOGGER.error(
+            "Not sending USB command; inventory row has no bus address"
+        )
+        return False
     data = build_set_command(
         light["type"],
         light["channel"],
